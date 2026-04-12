@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能学习管家 (SaaS版)</title>
+    <style>
+        :root { --primary: #4f46e5; --primary-hover: #4338ca; --bg: #f3f4f6; --surface: #ffffff; --text: #1f2937; --text-light: #6b7280; --border: #e5e7eb; --success: #10b981; --danger: #ef4444; }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; margin: 0; padding: 0; color: var(--text); padding-bottom: 40px;}
+
+        .navbar { background: var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 100; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; height: 56px; }
+        .nav-brand { font-size: 1.2em; font-weight: 900; color: var(--primary); display: flex; align-items: center; gap: 8px; }
+        .nav-links { display: flex; gap: 12px; height: 100%; }
+        .nav-item { cursor: pointer; padding: 0 14px; display: flex; align-items: center; font-weight: bold; color: var(--text-light); border-bottom: 3px solid transparent; transition: 0.2s; font-size: 14px; }
+        .nav-item:hover, .nav-item.active { color: var(--primary); border-bottom-color: var(--primary); }
+        .nav-user { display: flex; align-items: center; gap: 10px; font-weight: bold; color: var(--text-light); font-size: 13px; }
+        .logout-btn { background: #fee2e2; color: var(--danger); border: none; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8em; font-weight: bold; }
+
+        /* === 登录 === */
+        .hidden { display: none !important; }
+        h1, h2, h3 { margin: 0 0 12px; font-weight: 800; color: var(--text); }
+        h2 { font-size: 18px; }
+        h3 { font-size: 15px; }
+
+        #auth-screen { max-width: 400px; margin: 10vh auto; background: var(--surface); padding: 30px; border-radius: 16px; box-shadow: 12px 12px 30px rgba(0,0,0,0.15); }
+
+        /* === 输入框/按钮 === */
+        .input-box { width: 100%; padding: 12px 16px; border: none; border-radius: 10px; font-size: 14px; box-sizing: border-box; background: linear-gradient(145deg, #f0f0f0, #ffffff); outline: none; box-shadow: inset 2px 2px 5px #d1d1d1, inset -2px -2px 5px #ffffff; transition: 0.3s; }
+        .input-box:focus { box-shadow: inset 3px 3px 8px #c1c1c1, inset -3px -3px 8px #ffffff, 0 0 0 3px rgba(79,70,229,0.2); }
+
+        .btn { padding: 12px 24px; background: linear-gradient(145deg, #5a67d8, #4c51bf); color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: bold; transition: 0.3s; width: 100%; text-align: center; box-sizing: border-box; box-shadow: 4px 4px 10px rgba(0,0,0,0.2), -2px -2px 8px rgba(255,255,255,0.1); }
+        .btn:hover { transform: translateY(-2px); box-shadow: 6px 6px 15px rgba(0,0,0,0.25), -3px -3px 10px rgba(255,255,255,0.15); }
+        .btn:active { transform: translateY(0); }
+
+        /* === 双栏主布局 === */
+        .main-layout { display: flex; gap: 20px; max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+        .left-panel { flex: 0 0 35%; max-width: 380px; }
+        .right-panel { flex: 1; min-width: 0; }
+
+        .panel-card { background: var(--surface); padding: 24px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.03); border-top: 4px solid var(--primary); margin-bottom: 16px; }
+
+        /* === 任务清单 === */
+        .todo-stats { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 14px; background: linear-gradient(145deg, #f0f4ff, #fff); border-radius: 10px; box-shadow: inset 1px 1px 3px #d1d1d1, inset -1px -1px 3px #fff; }
+        .todo-stats .stat-text { font-size: 13px; color: var(--text-light); font-weight: 600; }
+        .todo-stats .stat-text strong { color: var(--primary); font-size: 16px; }
+        .todo-stats .stat-bar { flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+        .todo-stats .stat-bar-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #818cf8); border-radius: 3px; transition: width 0.5s ease; }
+
+        .todo-filters { display: flex; gap: 6px; margin-bottom: 12px; }
+        .filter-btn { padding: 6px 14px; border: 2px solid var(--border); border-radius: 16px; background: #fff; color: var(--text-light); font-size: 12px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+        .filter-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .filter-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+        .todo-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: linear-gradient(145deg, #fff, #f9fafb); border-radius: 8px; margin-bottom: 6px; transition: 0.2s; position: relative; }
+        .todo-item:hover { background: linear-gradient(145deg, #f0f4ff, #fff); }
+        .todo-item.completed span.task-content { text-decoration: line-through; color: var(--text-light); }
+        .todo-item .delete-btn { opacity: 0; transition: opacity 0.2s; background: none; border: none; color: var(--danger); cursor: pointer; font-weight: bold; font-size: 14px; }
+        .todo-item:hover .delete-btn { opacity: 1; }
+        .todo-item.just-completed { animation: taskPop 0.35s ease; }
+        @keyframes taskPop { 0% { transform: scale(1); } 40% { transform: scale(1.03); background: linear-gradient(145deg, #ecfdf5, #fff); } 100% { transform: scale(1); } }
+
+        .todo-checkbox { width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary); }
+        .todo-empty { text-align: center; padding: 24px 16px; color: var(--text-light); }
+        .todo-empty .empty-icon { font-size: 36px; margin-bottom: 8px; }
+        .todo-empty p { margin: 4px 0; font-size: 13px; }
+        .todo-clear-btn { display: inline-block; margin-top: 8px; padding: 6px 12px; background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text-light); font-size: 11px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+        .todo-clear-btn:hover { border-color: var(--danger); color: var(--danger); background: #fef2f2; }
+
+        /* === 右侧专注森林 === */
+        .forest-stats-row { display: flex; gap: 12px; margin-bottom: 16px; }
+        .forest-stat-card { flex: 1; text-align: center; padding: 12px 8px; border-radius: 12px; background: linear-gradient(145deg, #ecfdf5, #d1fae5); box-shadow: inset 1px 1px 4px rgba(0,0,0,0.04); }
+        .forest-stat-card .num { display: block; font-size: 22px; font-weight: 800; color: var(--success); }
+        .forest-stat-card .label { font-size: 11px; color: var(--text-light); margin-top: 2px; }
+        .forest-stat-card.dead { background: linear-gradient(145deg, #fef2f2, #fee2e2); }
+        .forest-stat-card.dead .num { color: var(--danger); }
+
+        .forest-grid { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px; background: linear-gradient(145deg, #f0fdf4, #ecfdf5); border-radius: 12px; margin-bottom: 14px; min-height: 70px; }
+        .tree-cell { font-size: 30px; cursor: default; transition: transform 0.2s; }
+        .tree-cell:hover { transform: scale(1.25); }
+
+        /* 计时器 */
+        .timer-wrapper { position: relative; width: 180px; height: 180px; margin: 10px auto; }
+        .progress-ring { width: 100%; height: 100%; }
+        #progress-circle { transition: stroke-dashoffset 0.5s ease; }
+        .timer-content { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+        .timer-text { font-size: 36px; font-weight: 800; color: var(--primary); }
+        .timer-label { font-size: 13px; color: var(--text); margin-top: 4px; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .timer-eta { font-size: 11px; color: var(--text-light); margin-top: 2px; }
+
+        .quote-box { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: linear-gradient(135deg, #eef2ff, #f0f9ff); border-radius: 10px; margin: 12px auto; max-width: 300px; font-size: 13px; color: #4338ca; }
+        .quote-icon { font-size: 14px; }
+
+        /* 时长按钮 */
+        .duration-shortcuts { display: flex; gap: 8px; margin-bottom: 12px; justify-content: center; }
+        .duration-btn { padding: 8px 18px; border: 2px solid var(--border); border-radius: 20px; background: #fff; color: var(--text-light); font-size: 13px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+        .duration-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .duration-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+        /* 历史 */
+        .history-section { margin-bottom: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+        .history-header { display: flex; justify-content: space-between; padding: 10px 14px; background: #f9fafb; cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text); }
+        .history-header:hover { background: #f3f4f6; }
+        .history-list { max-height: 160px; overflow-y: auto; }
+        .history-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12px; }
+        .history-item .status-icon { font-size: 14px; }
+        .history-item .history-subject { flex: 1; font-weight: 500; }
+        .history-item .history-meta { color: var(--text-light); font-size: 11px; }
+        .history-empty { text-align: center; padding: 16px; color: var(--text-light); font-size: 12px; }
+
+        /* 庆祝动画 */
+        .celebration { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; pointer-events: none; }
+        .confetti { position: absolute; font-size: 40px; animation: float-up 1.5s ease-out forwards; }
+        .confetti:nth-child(1) { animation-delay: 0s; left: -60px; }
+        .confetti:nth-child(2) { animation-delay: 0.2s; left: 0; }
+        .confetti:nth-child(3) { animation-delay: 0.4s; left: 60px; }
+        @keyframes float-up { 0% { opacity: 1; transform: translateY(0) scale(1); } 100% { opacity: 0; transform: translateY(-100px) scale(1.5); } }
+
+        /* === 底部 tab 区域 === */
+        .bottom-tabs { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        .bottom-tab-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+        .bottom-tab-btn { padding: 8px 20px; border: 2px solid var(--border); border-radius: 20px; background: rgba(255,255,255,0.9); color: var(--text-light); font-size: 13px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+        .bottom-tab-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .bottom-tab-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+        .bottom-content { background: var(--surface); padding: 24px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.03); }
+
+        /* 学习圈子 */
+        .post-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .post-header { display: flex; gap: 12px; margin-bottom: 8px; font-weight: bold; }
+        .post-footer { display: flex; gap: 20px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; color: var(--text-light); font-weight: bold; cursor: pointer; }
+        .liked { color: var(--danger); }
+
+        /* === 响应式 === */
+        @media (max-width: 768px) {
+            .main-layout { flex-direction: column; }
+            .left-panel { flex: none; max-width: 100%; }
+            .right-panel { flex: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="auth-screen">
+    <h1 style="text-align:center; color: var(--primary);">智能学习管家</h1>
+    <div style="display:flex; flex-direction:column; gap:12px; margin-top: 16px;">
+        <input type="text" class="input-box" id="auth-user" placeholder="👤 请输入学号或昵称">
+        <input type="password" class="input-box" id="auth-pass" placeholder="🔒 请输入密码">
+        <button class="btn" onclick="login()">🚀 登录系统</button>
+        <button class="btn" style="background: #f3f4f6; color: var(--text); border: 1px solid var(--border);" onclick="register()">📝 注册新账号</button>
+    </div>
+</div>
+
+<div id="main-app" class="hidden">
+    <div class="navbar">
+        <div class="nav-brand">✨ 学习通</div>
+        <div class="nav-links">
+            <div class="nav-item active" id="tab-community" onclick="switchBottomTab('community')">🌍 学习圈子</div>
+            <div class="nav-item" id="tab-exam" onclick="switchBottomTab('exam')">📝 模考中心</div>
+        </div>
+        <div class="nav-user"><span id="display-user"></span> <button class="logout-btn" onclick="logout()">退出</button></div>
+    </div>
+
+    <!-- ========== 左右双栏主区域 ========== -->
+    <div class="main-layout">
+        <!-- 左栏：任务清单 -->
+        <div class="left-panel">
+            <div class="panel-card">
+                <h2>✅ 任务清单</h2>
+                <div class="todo-stats">
+                    <span class="stat-text">已完成 <strong id="stat-done">0</strong> / <strong id="stat-total">0</strong></span>
+                    <div class="stat-bar"><div class="stat-bar-fill" id="stat-bar-fill" style="width:0%"></div></div>
+                </div>
+                <div style="display:flex; gap:8px; margin-bottom:10px;">
+                    <input type="text" id="todo-input" class="input-box" placeholder="添加新任务..." onkeydown="if(event.key==='Enter') addTodo()">
+                    <button class="btn" style="width:80px;" onclick="addTodo()">添加</button>
+                </div>
+                <div class="todo-filters">
+                    <button class="filter-btn active" data-filter="all" onclick="setFilter('all',this)">全部</button>
+                    <button class="filter-btn" data-filter="pending" onclick="setFilter('pending',this)">待完成</button>
+                    <button class="filter-btn" data-filter="completed" onclick="setFilter('completed',this)">已完成</button>
+                </div>
+                <div id="todo-list"></div>
+                <div id="todo-footer" style="text-align:right;"></div>
+            </div>
+        </div>
+
+        <!-- 右栏：专注森林 + 计划 -->
+        <div class="right-panel">
+            <div class="panel-card" style="border-top-color: var(--success);">
+                <h2>🌳 专注森林</h2>
+                <div class="forest-stats-row">
+                    <div class="forest-stat-card"><span class="num" id="stat-mins">0</span><span class="label">专注分钟</span></div>
+                    <div class="forest-stat-card"><span class="num" id="stat-trees">0</span><span class="label">成活树木</span></div>
+                    <div class="forest-stat-card dead"><span class="num" id="stat-dead">0</span><span class="label">枯萎树木</span></div>
+                </div>
+
+                <div id="forest-display" class="forest-grid"></div>
+
+                <!-- 种树设置 -->
+                <div id="forest-setup">
+                    <input type="text" id="focus-subject" class="input-box" placeholder="你要学习什么科目？(如：自动控制原理)" style="margin-bottom:10px;">
+                    <div class="duration-shortcuts">
+                        <button class="duration-btn" data-min="15" onclick="setDuration(15)">15min</button>
+                        <button class="duration-btn active" data-min="25" onclick="setDuration(25)">25min</button>
+                        <button class="duration-btn" data-min="45" onclick="setDuration(45)">45min</button>
+                        <button class="duration-btn" data-min="60" onclick="setDuration(60)">60min</button>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:14px; align-items:center;">
+                        <span style="color:var(--text-light);font-size:12px;">或</span>
+                        <input type="number" id="custom-duration" class="input-box" style="width:80px;" placeholder="自定义" min="1" max="120">
+                        <span style="color:var(--text-light);font-size:12px;">分钟</span>
+                        <select id="focus-tree" class="input-box" style="flex:1;">
+                            <option value="小松树">🌲 小松树</option>
+                            <option value="银杏树">🌳 银杏树</option>
+                            <option value="仙人掌">🌵 仙人掌</option>
+                        </select>
+                    </div>
+                    <button class="btn" style="background:var(--success);" onclick="startFocus()">🌱 种下树苗，开始专注</button>
+                    <button class="btn" style="margin-top:8px; background:linear-gradient(145deg, #9333ea, #7c3aed);" onclick="launchCity()">🏙️ 打开Pygame城市</button>
+                </div>
+
+                <!-- 专注中 -->
+                <div id="forest-active" class="hidden" style="text-align:center;">
+                    <div class="timer-wrapper">
+                        <svg class="progress-ring" viewBox="0 0 120 120">
+                            <defs><linearGradient id="grad1" x1="0%" y1="0%" x2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs>
+                            <circle cx="60" cy="60" r="54" fill="none" stroke="#e5e7eb" stroke-width="6"/>
+                            <circle id="progress-circle" cx="60" cy="60" r="54" fill="none" stroke="url(#grad1)" stroke-width="6" stroke-linecap="round" stroke-dasharray="339.292" stroke-dashoffset="339.292" transform="rotate(-90 60 60)"/>
+                        </svg>
+                        <div class="timer-content">
+                            <div id="focus-timer-text" class="timer-text">25:00</div>
+                            <div class="timer-label" id="focus-subject-display">正在专注</div>
+                            <div class="timer-eta" id="timer-eta">预计 00:00 完成</div>
+                        </div>
+                    </div>
+                    <div class="quote-box" id="focus-quote">
+                        <span class="quote-icon">💡</span>
+                        <span id="quote-text">专注当下，未来可期。</span>
+                    </div>
+                    <button class="btn" style="background:var(--danger);width:180px;" onclick="giveUpFocus()">🥀 放弃专注</button>
+                </div>
+            </div>
+
+            <!-- 专注历史 -->
+            <div class="history-section">
+                <div class="history-header" onclick="toggleHistory()">
+                    <span>📜 最近专注</span>
+                    <span id="history-toggle-icon">▼</span>
+                </div>
+                <div id="history-list" class="history-list hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== 底部 Tab：学习圈子 / 模考 ========== -->
+    <div class="bottom-tabs">
+        <div class="bottom-content">
+            <div id="community-panel">
+                <h3>🌍 学习圈子</h3>
+                <textarea id="post-content" class="input-box" placeholder="分享学习日常..." style="height:70px;margin-bottom:8px;"></textarea>
+                <button id="publish-btn" class="btn" style="width:auto;padding:10px 24px;" onclick="publishPost()">发布动态</button>
+                <div id="feed-container" style="margin-top:14px;"></div>
+            </div>
+            <div id="exam-panel" class="hidden">
+                <h3>🏛️ 模考中心</h3>
+                <select class="input-box" id="exam-type-selector" style="margin-bottom:10px;"></select>
+                <input type="text" class="input-box" id="join-roomid" placeholder="考场口令 (如: 001)" style="margin-bottom:10px;">
+                <button class="btn" onclick="enterRoom()">进入考场</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 庆祝动画 -->
+    <div id="celebration" class="celebration hidden">
+        <span class="confetti">🎉</span>
+        <span class="confetti">🎊</span>
+        <span class="confetti">✨</span>
+    </div>
+</div>
+
+<script>
+    let currentUser = ""; let currentSessionId = 0; let focusInterval; let focusRemaining = 0; let focusTotalDuration = 0;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        currentUser = localStorage.getItem("username");
+        if(currentUser) {
+            document.getElementById('display-user').innerText = currentUser;
+            document.getElementById('auth-screen').classList.add('hidden');
+            document.getElementById('main-app').classList.remove('hidden');
+            loadTodos();
+            loadForestStats();
+        }
+    });
+
+    // --- 导航 ---
+    function switchBottomTab(tab) {
+        document.getElementById('community-panel').classList.toggle('hidden', tab !== 'community');
+        document.getElementById('exam-panel').classList.toggle('hidden', tab !== 'exam');
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        document.getElementById('tab-' + tab).classList.add('active');
+        if(tab === 'community') loadFeed();
+    }
+    async function login() { const u = document.getElementById('auth-user').value.trim(), p = document.getElementById('auth-pass').value.trim(); if(!u) return; const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u, password: p}) }); if(res.ok) { localStorage.setItem("username", u); location.reload(); } else alert("密码错误！"); }
+    async function register() { const u = document.getElementById('auth-user').value.trim(), p = document.getElementById('auth-pass').value.trim(); if(!u) return; const res = await fetch('/api/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u, password: p}) }); if(res.ok) alert("注册成功，请登录！"); }
+    function logout() { localStorage.removeItem("username"); location.reload(); }
+
+    // --- ✅ To-Do ---
+    let todoFilter = 'all';
+    let allTasks = [];
+
+    function setFilter(f, btn) {
+        todoFilter = f;
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderTodos();
+    }
+
+    function renderTodos() {
+        const list = document.getElementById('todo-list');
+        const footer = document.getElementById('todo-footer');
+        list.innerHTML = '';
+        const total = allTasks.length;
+        const done = allTasks.filter(t => t.is_completed).length;
+        document.getElementById('stat-done').textContent = done;
+        document.getElementById('stat-total').textContent = total;
+        document.getElementById('stat-bar-fill').style.width = total ? (done / total * 100) + '%' : '0%';
+
+        let filtered = allTasks;
+        if (todoFilter === 'pending') filtered = allTasks.filter(t => !t.is_completed);
+        if (todoFilter === 'completed') filtered = allTasks.filter(t => t.is_completed);
+
+        if (!filtered.length) {
+            const empty = document.createElement('div');
+            empty.className = 'todo-empty';
+            empty.innerHTML = todoFilter === 'all'
+                ? '<div class="empty-icon">📋</div><p>还没有任务</p>'
+                : '<div class="empty-icon">' + (todoFilter === 'completed' ? '📝' : '🎯') + '</div><p>' + (todoFilter === 'completed' ? '还没有已完成的任务' : '所有任务都完成啦') + '</p>';
+            list.appendChild(empty);
+        } else {
+            filtered.forEach(t => {
+                const item = document.createElement('div');
+                item.className = 'todo-item' + (t.is_completed ? ' completed' : '');
+                item.id = 'todo-' + t.id;
+                const left = document.createElement('div');
+                left.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;min-width:0;';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox'; cb.className = 'todo-checkbox'; cb.checked = t.is_completed;
+                cb.onclick = () => toggleTodo(t.id);
+                const span = document.createElement('span');
+                span.className = 'task-content'; span.textContent = t.content;
+                span.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;';
+                left.appendChild(cb); left.appendChild(span);
+                const del = document.createElement('button');
+                del.className = 'delete-btn'; del.innerHTML = '✕';
+                del.onclick = () => deleteTodo(t.id);
+                item.appendChild(left); item.appendChild(del);
+                list.appendChild(item);
+            });
+        }
+        footer.innerHTML = '';
+        if (done > 0) {
+            const btn = document.createElement('button');
+            btn.className = 'todo-clear-btn'; btn.textContent = '清除已完成 (' + done + ')';
+            btn.onclick = clearCompleted; footer.appendChild(btn);
+        }
+    }
+
+    async function loadTodos() { const res = await fetch(`/api/todo/${currentUser}`); const data = await res.json(); allTasks = data.tasks || []; renderTodos(); }
+    async function addTodo() { const input = document.getElementById('todo-input'); const c = input.value.trim(); if(!c) return; await fetch('/api/todo/add', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username: currentUser, content: c})}); input.value = ''; loadTodos(); }
+    async function toggleTodo(id) { await fetch('/api/todo/toggle', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username: currentUser, task_id: id})}); const el = document.getElementById('todo-' + id); if(el) { el.classList.add('just-completed'); setTimeout(() => el.classList.remove('just-completed'), 400); } loadTodos(); }
+    async function deleteTodo(id) { await fetch('/api/todo/delete', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username: currentUser, task_id: id})}); loadTodos(); }
+    async function clearCompleted() { const done = allTasks.filter(t => t.is_completed); for(const t of done) { await fetch('/api/todo/delete', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username: currentUser, task_id: t.id})}); } loadTodos(); }
+
+    // --- 🌳 Forest ---
+    const QUOTES = ["专注当下，未来可期。","每一分钟的专注，都是成长。","坚持就是胜利，加油！","心无旁骛，事半功倍。","今天的努力，明天的收获。","静心专注，效率倍增。"];
+
+    async function loadForestStats() {
+        const res = await fetch(`/api/focus/stats/${currentUser}`);
+        const data = await res.json();
+        document.getElementById('stat-mins').innerText = data.total_minutes;
+        document.getElementById('stat-trees').innerText = data.total_trees;
+        document.getElementById('stat-dead').innerText = data.dead_trees;
+        loadForestHistory();
+    }
+
+    async function loadForestHistory() {
+        const res = await fetch(`/api/focus/history/${currentUser}?limit=30`);
+        const data = await res.json();
+        const history = data.history || [];
+
+        const forestDisplay = document.getElementById('forest-display');
+        forestDisplay.innerHTML = '';
+        const trees = history.filter(h => h.status !== 'pending');
+        if (!trees.length) {
+            forestDisplay.innerHTML = '<div style="color:var(--text-light);text-align:center;width:100%;font-size:13px;">完成专注后这里会长出树木 🌲</div>';
+        } else {
+            trees.slice(0, 30).forEach(h => {
+                const div = document.createElement('div');
+                div.className = 'tree-cell';
+                div.innerHTML = getTreeEmoji(h.tree_type, h.status);
+                div.title = `${h.subject || '未命名'} - ${h.duration_minutes}分钟`;
+                forestDisplay.appendChild(div);
+            });
+            if (trees.length > 30) {
+                const more = document.createElement('span');
+                more.style.cssText = 'color:var(--text-light);font-size:12px;padding:4px;';
+                more.textContent = `+${trees.length - 30}`;
+                forestDisplay.appendChild(more);
+            }
+        }
+
+        const historyList = document.getElementById('history-list');
+        historyList.innerHTML = '';
+        const historyItems = trees.slice(0, 5);
+        if (!historyItems.length) {
+            historyList.innerHTML = '<div class="history-empty">还没有专注记录</div>';
+        } else {
+            historyItems.forEach(h => {
+                const div = document.createElement('div');
+                div.className = 'history-item';
+                div.innerHTML = `<span class="status-icon">${h.status === 'completed' ? '✅' : '🥀'}</span><span class="history-subject">${h.subject || '未命名任务'}</span><span class="history-meta">${h.duration_minutes}分钟 · ${formatDate(h.created_at)}</span>`;
+                historyList.appendChild(div);
+            });
+        }
+    }
+
+    function getTreeEmoji(treeType, status) {
+        if (status === 'failed') return '🥀';
+        return { '小松树': '🌲', '银杏树': '🌳', '仙人掌': '🌵' }[treeType] || '🌱';
+    }
+    function formatDate(dateStr) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr), now = new Date(), diff = Math.floor((now - d) / 86400000);
+        if (diff === 0) return '今天';
+        if (diff < 7) return `${diff}天前`;
+        return `${d.getMonth() + 1}/${d.getDate()}`;
+    }
+    function toggleHistory() {
+        const list = document.getElementById('history-list'), icon = document.getElementById('history-toggle-icon');
+        list.classList.toggle('hidden');
+        icon.textContent = list.classList.contains('hidden') ? '▼' : '▲';
+    }
+    function setDuration(mins) {
+        document.querySelectorAll('.duration-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector(`.duration-btn[data-min="${mins}"]`).classList.add('active');
+        document.getElementById('custom-duration').value = '';
+    }
+
+    async function startFocus() {
+        const sub = document.getElementById('focus-subject').value.trim() || "未命名任务";
+        let dur = parseInt(document.getElementById('custom-duration').value);
+        if (!dur || dur < 1) {
+            const activeBtn = document.querySelector('.duration-btn.active');
+            dur = activeBtn ? parseInt(activeBtn.dataset.min) : 25;
+        }
+        const tree = document.getElementById('focus-tree').value;
+        const res = await fetch('/api/focus/start', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username: currentUser, subject: sub, duration: dur, tree_type: tree})});
+        const data = await res.json(); currentSessionId = data.session_id;
+        focusTotalDuration = dur * 60; focusRemaining = focusTotalDuration;
+
+        document.getElementById('forest-setup').classList.add('hidden');
+        document.getElementById('forest-active').classList.remove('hidden');
+        document.getElementById('focus-subject-display').innerText = sub;
+        const eta = new Date(Date.now() + focusTotalDuration * 1000);
+        document.getElementById('timer-eta').innerText = `预计 ${eta.getHours().toString().padStart(2,'0')}:${eta.getMinutes().toString().padStart(2,'0')} 完成`;
+        document.getElementById('quote-text').innerText = QUOTES[Math.floor(Math.random() * QUOTES.length)];
+        updateFocusUI();
+        focusInterval = setInterval(() => { focusRemaining--; updateFocusUI(); if(focusRemaining <= 0) completeFocus(); }, 1000);
+    }
+
+    function updateFocusUI() {
+        let m = Math.floor(focusRemaining / 60), s = focusRemaining % 60;
+        document.getElementById('focus-timer-text').innerText = `${m < 10 ? '0'+m : m}:${s < 10 ? '0'+s : s}`;
+        const progress = 1 - (focusRemaining / focusTotalDuration);
+        document.getElementById('progress-circle').style.strokeDashoffset = 339.292 * (1 - progress);
+    }
+
+    async function giveUpFocus() {
+        if(!confirm("真的要放弃吗？树苗会枯死哦！🥀")) return;
+        clearInterval(focusInterval);
+        await fetch('/api/focus/end', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({session_id: currentSessionId, username: currentUser, status: 'failed'})});
+        alert("树苗枯萎了...");
+        resetForestUI();
+    }
+
+    async function completeFocus() {
+        clearInterval(focusInterval);
+        const c = document.getElementById('celebration');
+        c.classList.remove('hidden'); setTimeout(() => c.classList.add('hidden'), 1500);
+        if (Notification.permission === "granted") new Notification("🎉 专注完成！", { body: "太棒了！你的树苗已经长成大树！" });
+        else if (Notification.permission !== "denied") Notification.requestPermission();
+        await fetch('/api/focus/end', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({session_id: currentSessionId, username: currentUser, status: 'completed'})});
+        alert("🎉 恭喜！专注完成，树木已种下！");
+        resetForestUI();
+    }
+
+    function resetForestUI() {
+        document.getElementById('forest-setup').classList.remove('hidden');
+        document.getElementById('forest-active').classList.add('hidden');
+        document.getElementById('progress-circle').style.strokeDashoffset = 339.292;
+        loadForestStats();
+    }
+
+    async function launchCity() {
+        if(!currentUser) { alert("请先登录账号"); return; }
+        const res = await fetch('/api/city/launch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({username: currentUser}) });
+        const data = await res.json();
+        if(res.ok && data.success) alert(data.already_running ? "Pygame城市窗口已经在运行中" : "Pygame城市已启动");
+        else alert(data.detail || data.message || "启动Pygame城市失败");
+    }
+
+    // --- 🌍 圈子 ---
+    async function loadFeed() {
+        const res = await fetch(`/api/posts?username=${currentUser}`); const data = await res.json();
+        const container = document.getElementById('feed-container'); container.innerHTML = "";
+        data.feed.forEach(p => {
+            container.innerHTML += `<div class="post-card"><div class="post-header">${p.author} <span style="font-weight:normal;color:#888;font-size:0.8em;margin-left:auto;">${p.time}</span></div><div>${p.content.replace(/\n/g,'<br>')}</div><div class="post-footer"><span class="${p.has_liked?'liked':''}" onclick="toggleLike(${p.id})">${p.has_liked?'❤️':'🤍'} ${p.likes}</span></div></div>`;
+        });
+    }
+    async function publishPost() { const c = document.getElementById('post-content').value.trim(); if(!c) return; document.getElementById('publish-btn').innerText = "发布中..."; await fetch('/api/posts/create', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username: currentUser, content: c})}); document.getElementById('post-content').value = ""; document.getElementById('publish-btn').innerText = "发布动态"; loadFeed(); }
+    async function toggleLike(id) { await fetch('/api/posts/like', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({post_id: id, username: currentUser})}); loadFeed(); }
+</script>
+</body>
+</html>
