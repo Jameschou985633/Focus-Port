@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
@@ -518,39 +518,6 @@ onUnmounted(() => {
         <!-- 表情飘屏 -->
         <div class="emoji-container">
           <div
-            v-for="emoji in emojis"
-            :key="emoji.id"
-            class="floating-emoji"
-            :style="{ left: emoji.x + '%', animationDelay: '0s' }"
-          >
-            {{ emoji.emoji }}
-          </div>
-        </div>
-      </div>
-
-      <!-- 底部操作栏 -->
-      <div class="bottom-bar">
-        <!-- 表情栏 -->
-        <div class="emoji-bar">
-          <SpaceButton
-            v-for="emoji in availableEmojis"
-            :key="emoji"
-            variant="secondary"
-            size="sm"
-            @click="sendEmoji(emoji)"
-          >
-            {{ emoji }}
-          </SpaceButton>
-        </div>
-
-        <!-- 退出按钮 -->
-        <SpaceButton variant="danger" @click="exitRoom">
-          Leave Fleet Nexus
-        </SpaceButton>
-      </div>
-    </div>
-  </div>
-</template>
             v-for="emoji in emojis"
             :key="emoji.id"
             class="floating-emoji"
