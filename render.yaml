@@ -1,15 +1,14 @@
-﻿# FocusPort 閮ㄧ讲閰嶇疆
-# 浣跨敤 Render Blueprint 涓€閿儴缃?
 services:
   - type: web
     name: focusport
     env: python
-    region: singapore  # 鏂板姞鍧″尯鍩燂紝鍥藉唴璁块棶杈冪ǔ瀹?    plan: free
-    # 鏋勫缓姝ラ锛氬畨瑁匬ython渚濊禆 + 鏋勫缓鍓嶇
+    region: singapore
+    plan: free
     buildCommand: |
       pip install -r requirements.txt
-      cd focusport-frontend && npm install && npm run build
-    # 鍚姩鍛戒护
+      cd focusport-frontend
+      npm install --no-audit --no-fund
+      npm run build
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
@@ -17,4 +16,3 @@ services:
         value: 3.11.0
       - key: NODE_VERSION
         value: 18
-

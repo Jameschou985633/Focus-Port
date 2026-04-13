@@ -36,6 +36,7 @@ ENV/
 
 # Local-only Claude / Cursor settings
 .claude/settings.local.json
+.focusport-frontend-inner-git-backup/
 
 # Logs
 *.log
@@ -52,9 +53,9 @@ node_modules/
 
 # Environment
 .env
+.env.development
 .env.local
 .env.*.local
 
 # Asset files (too large for git)
 # Downloads/
-
