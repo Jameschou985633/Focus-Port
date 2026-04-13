@@ -1,16 +1,8 @@
 """
-Pygame 城市建造器（双币系统 + 3D OBJ 离线精灵图接入版）
-
-功能：
-- 从 focuscrossing.db 读取/保存金币、钻石、已放置建筑
-- 优先从 city_sprite_manifest.json 加载 OBJ 离线渲染出的 PNG 精灵
-- 如果某类建筑还没导出 PNG，则自动回退到颜色块占位符
-- 支持 1-5 建造、R 拆除、ESC 取消、Y 轴排序渲染
-
-运行：
-python city_builder_pygame.py
-python city_builder_pygame.py 你的用户名
-"""
+Pygame 闂備胶纭堕弲娑欘殽閸濄儳鍗氶悹杞拌閸ゅ牊绻涘顔荤按闁稿鎹囬幃鈺呭矗婢跺苯缍旈梻浣瑰缁嬫垿鎮ч崱妤婂殨闁煎鍊栭弳婊兠归敐鍡樸仢闁稿繐娲ㄧ槐?+ 3D OBJ 缂傚倷绀侀崐钘夌暦閻㈢鍚归幖杈剧到閸ㄦ繈鏌涢幘妤€鍊荤憴锕傛⒑閹肩偛鍔ら柛瀣尵閺侇噣骞橀鑲╊槯闂侀潧锛忛崘鐐瘔闂?
+闂備礁鎲″濠氬窗閺囥垹绀傛慨妞诲亾闁?- 濠?focusport.db 闂佽崵濮村ú鈺咁敋瑜戦妵?濠电儑绲藉ú锔炬崲閸岀偞鍋ら柕濞炬櫆閻撳倿鏌熺€涙绠樻い蹇旂叀閺屾洟宕遍弴鐘电崲闂佸湱鎳撳ú顓㈠箚瀹€鍕€烽悷娆欑到娴滄儳霉閿濆浂鐒鹃柛銈嗗浮閺岋繝鍩€椤掑嫬绀堢憸蹇涘几閸屾壕鍋撻悙鐟扳偓娑樷枍閿濆鍋?- 濠电偞娼欓崥瀣晪闂佸憡蓱缁嬫帞绮?city_sprite_manifest.json 闂備礁鎲″缁樻叏閹灐?OBJ 缂傚倷绀侀崐钘夌暦閻㈢鍚归幖缁版壋鍋撻幒妤€鐭楀璺鸿嫰鐢剟姊洪崨濠傜伇婵炲拑绲介埢?PNG 缂傚倷绶￠崰鏍ㄦ櫠閼恒儱顕?- 濠电姷顣介埀顒€鍟块埀顒€缍婇幃妯诲緞閹邦剝鎽曢梺褰掑亰閸犳盯锝為敂閿亾閻愮懓鈧稑鈻嶉敐澶嬪仱婵﹩鍘芥禍銈嗕繆椤栨繂鍚规慨濠囩畺閹鎮介棃娑樹粯闂?PNG闂備焦瀵х粙鎴︽嚐椤栫偛鍨傛い鏍仦閸ゅ﹥銇勮箛鎾愁仼鐞氱喖姊洪幖鐐插姢闁稿鍊濋崺鈧い鎴ｆ娴滈箖姊洪崨濠傜瑐闁告濞婅矾濞撴埃鍋撻柟铏箞楠炴捇骞掗幘鍏呮樊闂備礁鎲￠〃鍫熸叏瀹曞洨绀婇柛娑卞灣缁?- 闂備浇銆€閸嬫挻銇勯弽銊р槈闁?1-5 闁诲海鍋ｉ崐鏍ь渻娴犲鐒垫い鎺戝€歌ⅷ闂侀€炲苯鍘搁梻?闂備胶鎳撻崲鎻捨涘┑鍡忔瀺閹兼番鍔岃繚婵炴垶鎸绘竟瀛?闂備礁鎲￠悷锕傛偋濡ゅ啰鐭撻柣鎴ｆ杩濇繛?闂佸搫顦遍崑娑㈡偤閵娧勬殰闁规儳鐡ㄩ崕鐔肩叓閸ャ劍顥嗘い鈺婂亰閺?
+闂佸搫顦弲婊堝礉濮椻偓閵嗕線骞嬮敂鑺ユ珫?python city_builder_pygame.py
+python city_builder_pygame.py 濠电偠鎻徊鎸庢叏瀹勬壋鏋旈柟杈鹃檮閸嬨劑鏌曟繝蹇曠暠闁绘挻娲熼弻?"""
 
 from __future__ import annotations
 
@@ -26,9 +18,19 @@ import pygame
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "focuscrossing.db"
+PRIMARY_DB_PATH = BASE_DIR / "focusport.db"
+LEGACY_DB_PATH = BASE_DIR / "focuscrossing.db"
 MANIFEST_PATH = BASE_DIR / "city_sprite_manifest.json"
 DEFAULT_USERNAME = os.getenv("FOCUS_CITY_USER", "demo_player")
+
+
+def resolve_db_path() -> Path:
+    if PRIMARY_DB_PATH.exists() or not LEGACY_DB_PATH.exists():
+        return PRIMARY_DB_PATH
+    return LEGACY_DB_PATH
+
+
+DB_PATH = resolve_db_path()
 
 SCREEN_WIDTH = 1200
 SCREEN_HEIGHT = 800
@@ -39,8 +41,7 @@ INITIAL_COINS = 1000
 INITIAL_DIAMONDS = 50
 DEMOLISH_COST = 10
 
-# 颜色块兜底：PNG 精灵缺失时仍可正常玩。
-WHITE = (255, 255, 255)
+# 濠碘槅鍋嗘晶妤冨垝韫囨梻鐝跺┑鐘叉搐闁裤倖淇婇妶鍌氫壕闂佸憡顭堥～澶愬箚閺冨牆鍗虫い蹇撴閻涱櫀NG 缂傚倷绶￠崰鏍ㄦ櫠閼恒儱顕遍柟鐑樻⒒绾句粙鏌涘┑鍡楊仴濞存粌銈搁弻锟犲礃閳哄倹鐎紓渚囧枟閻╊垰鐣烽敐澶樻晬婵炴垵宕俊褔鏌ｉ姀鈺佺仩闁硅姤绮庨弫顔济洪鍕?WHITE = (255, 255, 255)
 BLACK = (25, 25, 25)
 LIGHT_GRAY = (220, 220, 220)
 DARK_GRAY = (40, 44, 52)
@@ -58,7 +59,7 @@ OBJECT_TYPE_ORDER = ["plant", "road", "building_b", "building_a", "building_s"]
 
 DEFAULT_TYPE_CONFIG = {
     "plant": {
-        "name": "植物",
+        "name": "Plant",
         "price": 100,
         "currency": "coins",
         "color": GREEN,
@@ -68,7 +69,7 @@ DEFAULT_TYPE_CONFIG = {
         "priority": ("tree-large", "planter", "tree-small"),
     },
     "road": {
-        "name": "道路",
+        "name": "Road",
         "price": 50,
         "currency": "coins",
         "color": ROAD_GRAY,
@@ -142,12 +143,11 @@ class PlacedObject:
 
     @property
     def sort_y(self) -> int:
-        # 用底边 Y 值排序，保证遮挡关系更自然。
+        # Sort by the object's bottom edge so layering feels natural.
         return self.y + self.spec.size[1]
 
-
 def load_cn_font(size: int) -> pygame.font.Font:
-    """优先加载中文字体，避免 UI 文字变成方块。"""
+    """Prefer a Chinese-capable font so the UI text can render correctly."""
     for font_name in ("microsoftyahei", "simhei", "simsun", "arialunicode"):
         font_path = pygame.font.match_font(font_name)
         if font_path:
@@ -204,7 +204,7 @@ def load_buildings_from_manifest() -> Dict[str, BuildingSpec]:
     try:
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     except Exception as exc:
-        print(f"[WARN] 读取 manifest 失败，回退颜色块: {exc}")
+        print(f"[WARN] 闂佽崵濮村ú鈺咁敋瑜戦妵?manifest 濠电姰鍨洪崕鑲╁垝閸撗勫枂闁挎洖鍊归弲顒勬倶閻愯泛袚缂佲偓閳ь剟姊绘笟鍥т簮闁稿鎸歌灋闁绘鐗忛惌搴☆熆閻熷府韬€? {exc}")
         return buildings
 
     for object_type in OBJECT_TYPE_ORDER:
@@ -214,7 +214,7 @@ def load_buildings_from_manifest() -> Dict[str, BuildingSpec]:
 
         sprite_path = normalize_sprite_path(str(chosen.get("sprite_path", "")))
         if sprite_path and not Path(sprite_path).exists():
-            print(f"[WARN] {object_type} 的 PNG 不存在，回退颜色块: {sprite_path}")
+            print(f"[WARN] {object_type} 闂?PNG 濠电偞鍨堕幐鍝ョ矓閹绢喗鍋ら柕濞炬櫅閹硅埖銇勯鐔风缂佲偓婢舵劖鐓曢柕澹啩妲愰梺閫炲苯鍘撮柛瀣尭铻為柣妤€鐗忛惌搴☆熆閻熷府韬€? {sprite_path}")
             continue
 
         cfg = DEFAULT_TYPE_CONFIG[object_type]
@@ -238,8 +238,7 @@ BUILDINGS: Dict[str, BuildingSpec] = load_buildings_from_manifest()
 
 
 class CityRepository:
-    """负责把 Pygame 城市数据持久化到 focuscrossing.db。"""
-
+    """Persist the Pygame city data in the project database."""
     def __init__(self, db_path: Path, username: str) -> None:
         self.db_path = str(db_path)
         self.username = username
@@ -307,7 +306,7 @@ class CityRepository:
             )
 
     def bootstrap_player(self) -> None:
-        """首次进入城市时补齐初始金币/钻石。"""
+        """Seed the player with initial currency on first entry."""
         with self._connect() as conn:
             c = conn.cursor()
             c.execute("SELECT 1 FROM Pygame_City_Profile WHERE username = ?", (self.username,))
@@ -380,11 +379,11 @@ class CityRepository:
 
             if spec.currency == "coins":
                 if coins < spec.price:
-                    return False, f"金币不足，{spec.name} 需要 {spec.price} 金币。", None, coins, diamonds
+                    return False, f"Not enough coins to buy {spec.name}. Need {spec.price} coins.", None, coins, diamonds
                 coins -= spec.price
             else:
                 if diamonds < spec.price:
-                    return False, f"钻石不足，{spec.name} 需要 {spec.price} 钻石。", None, coins, diamonds
+                    return False, f"Not enough diamonds to buy {spec.name}. Need {spec.price} diamonds.", None, coins, diamonds
                 diamonds -= spec.price
 
             c.execute(
@@ -397,8 +396,8 @@ class CityRepository:
             )
             new_object = PlacedObject(int(c.lastrowid), object_type, x, y)
 
-        currency_name = "钻石" if spec.currency == "diamonds" else "金币"
-        return True, f"成功放置 {spec.name}，-{spec.price}{currency_name}", new_object, coins, diamonds
+        currency_name = "diamonds" if spec.currency == "diamonds" else "coins"
+        return True, f"Placed {spec.name} for {spec.price} {currency_name}.", new_object, coins, diamonds
 
     def demolish(self, object_id: int) -> Tuple[bool, str, int, int]:
         with self._connect() as conn:
@@ -407,7 +406,7 @@ class CityRepository:
             coins, diamonds = self.read_wallet_row(c)
 
             if coins < DEMOLISH_COST:
-                return False, "连拆迁费都付不起了！", coins, diamonds
+                return False, "Not enough coins to demolish. Need more coins.", coins, diamonds
 
             c.execute(
                 "SELECT object_type FROM Pygame_City_Objects WHERE id = ? AND username = ?",
@@ -415,7 +414,7 @@ class CityRepository:
             )
             row = c.fetchone()
             if not row or row[0] not in BUILDINGS:
-                return False, "这个建筑存档不存在，可能已经被拆掉了。", coins, diamonds
+                return False, "Object not found or cannot be demolished.", coins, diamonds
 
             coins -= DEMOLISH_COST
             c.execute(
@@ -427,14 +426,14 @@ class CityRepository:
                 (object_id, self.username),
             )
 
-        return True, f"已拆除 {BUILDINGS[row[0]].name}，拆迁费 -{DEMOLISH_COST} 金币", coins, diamonds
+        return True, f"Demolished {BUILDINGS[row[0]].name}. Refunded {-DEMOLISH_COST} coins.", coins, diamonds
 
 
 class CityBuilderGame:
     def __init__(self, username: str) -> None:
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("番茄钟城市建造器 - OBJ 精灵商店")
+        pygame.display.set_caption("FocusPort City Builder - OBJ Sprite Edition")
 
         self.font_large = load_cn_font(32)
         self.font_medium = load_cn_font(24)
@@ -459,8 +458,8 @@ class CityBuilderGame:
 
     def startup_message(self) -> str:
         if MANIFEST_PATH.exists() and any(spec.sprite_path for spec in BUILDINGS.values()):
-            return "已加载 OBJ 导出的 PNG 精灵；学习奖励会自动同步到城市钱包。"
-        return "未检测到 city_sprite_manifest.json，当前先使用颜色块占位符。"
+            return "Loaded OBJ-derived PNG sprites from the manifest for the city builder."
+        return "Manifest not found. Falling back to color blocks until city_sprite_manifest.json is available."
 
     def show_message(self, text: str, color: Tuple[int, int, int] = WHITE, duration: int = 2200) -> None:
         self.message = text
@@ -476,7 +475,7 @@ class CityBuilderGame:
         latest_coins, latest_diamonds = self.repo.load_wallet()
         if latest_coins > self.coins or latest_diamonds > self.diamonds:
             self.show_message(
-                f"已同步番茄钟奖励：金币 {self.coins} -> {latest_coins}，钻石 {self.diamonds} -> {latest_diamonds}",
+                f"Wallet synced: coins {self.coins} -> {latest_coins}, diamonds {self.diamonds} -> {latest_diamonds}",
                 CYAN,
                 2600,
             )
@@ -517,7 +516,7 @@ class CityBuilderGame:
 
     def try_place(self, mouse_pos: Tuple[int, int]) -> None:
         if not self.selected_type:
-            self.show_message("请先按 1-5 选择要建造的物体。", GOLD)
+            self.show_message("Press 1-5 to select a building type before placing.", GOLD)
             return
 
         spec = BUILDINGS[self.selected_type]
@@ -527,11 +526,11 @@ class CityBuilderGame:
         target_rect = pygame.Rect(x, y, width, height)
 
         if not self.build_area.contains(target_rect):
-            self.show_message("不能放在这里，请把建筑放到绿色草地区域内。", RED)
+            self.show_message("Placement must stay inside the build area.", RED)
             return
 
         if self.is_overlapping_existing(target_rect):
-            self.show_message("这里已经有建筑了，换个位置试试。", RED)
+            self.show_message("This spot overlaps an existing object.", RED)
             return
 
         ok, message, new_obj, self.coins, self.diamonds = self.repo.buy_and_place(self.selected_type, x, y)
@@ -544,7 +543,7 @@ class CityBuilderGame:
     def try_demolish(self, mouse_pos: Tuple[int, int]) -> None:
         target = self.find_object_at(mouse_pos)
         if not target:
-            self.show_message("这里没有可拆除的建筑。", RED)
+            self.show_message("No object found at the current cursor position.", RED)
             return
 
         ok, message, self.coins, self.diamonds = self.repo.demolish(target.object_id)
@@ -559,18 +558,18 @@ class CityBuilderGame:
         self.selected_type = None
         pygame.mouse.set_visible(not self.recycle_mode)
         if self.recycle_mode:
-            self.show_message("已进入拆除模式：点击建筑即可拆除，每次消耗 10 金币。", RED)
+            self.show_message("Recycle mode enabled. Click a placed object to remove it for a coin cost.", RED)
         else:
-            self.show_message("已退出拆除模式。", LIGHT_GRAY)
+            self.show_message("Recycle mode disabled.", LIGHT_GRAY)
 
     def select_building(self, object_type: str) -> None:
         self.selected_type = object_type
         self.recycle_mode = False
         pygame.mouse.set_visible(True)
         spec = BUILDINGS[object_type]
-        currency_name = "钻石" if spec.currency == "diamonds" else "金币"
+        currency_name = "diamonds" if spec.currency == "diamonds" else "coins"
         source_hint = f" | {spec.source_item_code}" if spec.source_item_code else ""
-        self.show_message(f"已选择 {spec.name}，价格 {spec.price} {currency_name}{source_hint}", WHITE)
+        self.show_message(f"Selected {spec.name} for {spec.price} {currency_name}{source_hint}", WHITE)
 
     def handle_events(self) -> bool:
         for event in pygame.event.get():
@@ -582,7 +581,7 @@ class CityBuilderGame:
                     self.selected_type = None
                     self.recycle_mode = False
                     pygame.mouse.set_visible(True)
-                    self.show_message("已取消当前选择。", LIGHT_GRAY)
+                    self.show_message("Selection cleared.", LIGHT_GRAY)
                 elif event.key == pygame.K_r:
                     self.toggle_recycle_mode()
                 else:
@@ -604,7 +603,7 @@ class CityBuilderGame:
         pygame.draw.rect(self.screen, GRASS_BG, self.build_area, border_radius=18)
         pygame.draw.rect(self.screen, (73, 117, 53), self.build_area, width=4, border_radius=18)
 
-        # 浅色网格只是辅助摆放，不强制吸附格子。
+        # Draw a light grid over the build area.
         for x in range(self.build_area.left + 40, self.build_area.right, 80):
             pygame.draw.line(
                 self.screen,
@@ -686,28 +685,28 @@ class CityBuilderGame:
 
     def draw_wallet_ui(self) -> None:
         pygame.draw.rect(self.screen, PANEL_BG, (20, 14, 240, 58), border_radius=14)
-        coin_surface = self.font_medium.render(f"金币：{self.coins}", True, GOLD)
-        diamond_surface = self.font_medium.render(f"钻石：{self.diamonds}", True, CYAN)
+        coin_surface = self.font_medium.render(f"Coins: {self.coins}", True, GOLD)
+        diamond_surface = self.font_medium.render(f"Diamonds: {self.diamonds}", True, CYAN)
         self.screen.blit(coin_surface, (36, 18))
         self.screen.blit(diamond_surface, (36, 44))
 
-        user_surface = self.font_small.render(f"玩家：{self.username}", True, LIGHT_GRAY)
+        user_surface = self.font_small.render(f"Player: {self.username}", True, LIGHT_GRAY)
         self.screen.blit(user_surface, (SCREEN_WIDTH - user_surface.get_width() - 28, 24))
 
     def current_mode_text(self) -> str:
         if self.recycle_mode:
-            return "当前：[拆除模式]"
+            return "Mode: recycle"
         if self.selected_type:
-            return f"当前：[正在建造: {BUILDINGS[self.selected_type].name}]"
-        return "当前：[空闲] 按 1-5 选择建造，按 R 进入拆除模式"
+            return f"Mode: place [{BUILDINGS[self.selected_type].name}]"
+        return "Mode: idle. Press 1-5 to choose, R to recycle, ESC to cancel."
 
     def draw_bottom_ui(self) -> None:
         mode_surface = self.font_medium.render(self.current_mode_text(), True, RED if self.recycle_mode else WHITE)
         self.screen.blit(mode_surface, ((SCREEN_WIDTH - mode_surface.get_width()) // 2, SCREEN_HEIGHT - 112))
 
         help_text = (
-            "1 植物(100金币) | 2 道路(50金币) | 3 B级建筑(300金币) | "
-            "4 A级建筑(500金币) | 5 S级建筑(10钻石) | R 拆除 | ESC 取消"
+            "1 Plant 100 coins | 2 Road 50 coins | 3 B Building 300 coins | "
+            "4 A Building 500 coins | 5 S Building 10 diamonds | R Demolish | ESC Cancel"
         )
         help_surface = self.font_small.render(help_text, True, LIGHT_GRAY)
         self.screen.blit(help_surface, ((SCREEN_WIDTH - help_surface.get_width()) // 2, SCREEN_HEIGHT - 52))
@@ -725,7 +724,7 @@ class CityBuilderGame:
     def render(self) -> None:
         self.draw_ground()
 
-        # Y 轴排序渲染：底边越靠下越晚画，遮挡关系更对。
+        # Render placed objects sorted by their bottom edge.
         for obj in sorted(self.placed_objects, key=lambda item: item.sort_y):
             self.draw_object(obj)
 
@@ -756,3 +755,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

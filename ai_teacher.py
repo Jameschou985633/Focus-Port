@@ -1,8 +1,20 @@
 import sqlite3, json, time
+from pathlib import Path
 from openai import OpenAI
 
 DEEPSEEK_API_KEY = "sk-181b1df1d8b74a20bb261783511d317a"
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+
+
+BASE_DIR = Path(__file__).resolve().parent
+PRIMARY_DB_PATH = BASE_DIR / "focusport.db"
+LEGACY_DB_PATH = BASE_DIR / "focuscrossing.db"
+
+
+def resolve_db_path():
+    if PRIMARY_DB_PATH.exists() or not LEGACY_DB_PATH.exists():
+        return PRIMARY_DB_PATH
+    return LEGACY_DB_PATH
 
 
 def ai_grade_paper(ai_prompt, answers_dict):
@@ -37,7 +49,7 @@ def ai_grade_paper(ai_prompt, answers_dict):
 
 
 def run_ai_teacher():
-    conn = sqlite3.connect("focuscrossing.db")
+    conn = sqlite3.connect(resolve_db_path())
     cursor = conn.cursor()
     cursor.execute(
         '''SELECT s.id, s.username, s.exam_code, s.subjective_answers, e.ai_prompt FROM Exam_Submissions s JOIN Exams e ON s.exam_code = e.exam_code WHERE s.subjective_score = 0''')

@@ -19,10 +19,11 @@ from pydantic import BaseModel, Field
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "focuscrossing.db"
+PRIMARY_DB_PATH = BASE_DIR / "focusport.db"
+LEGACY_DB_PATH = BASE_DIR / "focuscrossing.db"
 STATIC_DIR = BASE_DIR / "static"
-FRONTEND_DIST = BASE_DIR / "eduee-frontend" / "dist"
-FRONTEND_PUBLIC = BASE_DIR / "eduee-frontend" / "public"
+FRONTEND_DIST = BASE_DIR / "focusport-frontend" / "dist"
+FRONTEND_PUBLIC = BASE_DIR / "focusport-frontend" / "public"
 CITY_ASSET_ROOT = Path(r"C:\Users\86153\Downloads\asset")
 CITY_LAYOUT_PATH = STATIC_DIR / "city_layout_slots.json"
 ISOMETRIC_ASSET_ROOT = FRONTEND_PUBLIC / "assets" / "2d"
@@ -42,7 +43,16 @@ TASK_DIFFICULTY_MULTIPLIERS = {"L1": 1.0, "L2": 1.5}
 LOCAL_ENV_PATHS = (BASE_DIR / ".env.local", FRONTEND_DIST.parent / ".env.local")
 
 
-app = FastAPI(title="FocusCrossing", version="3.0.0")
+def resolve_db_path() -> Path:
+    if PRIMARY_DB_PATH.exists() or not LEGACY_DB_PATH.exists():
+        return PRIMARY_DB_PATH
+    return LEGACY_DB_PATH
+
+
+DB_PATH = resolve_db_path()
+
+
+app = FastAPI(title="FocusPort", version="3.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

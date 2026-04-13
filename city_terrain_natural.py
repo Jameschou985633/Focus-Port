@@ -17,6 +17,7 @@ import math
 import os
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import bpy
@@ -62,11 +63,16 @@ DIRS: Dict[str, Tuple[int, int]] = {
 
 ORTHO = (0.0, math.pi * 0.5, math.pi, math.pi * 1.5)
 
+try:
+    BASE_DIR = Path(__file__).resolve().parent
+except NameError:
+    BASE_DIR = Path.cwd()
+
 
 # -----------------------------------------------------------------------------
 # Asset config (strictly from provided list)
 # -----------------------------------------------------------------------------
-NATURE_ASSET_ROOT = r"C:\Users\86153\PycharmProjects\PythonProject2\kenney_assets\nature-kit\Models\OBJ format"
+NATURE_ASSET_ROOT = str(BASE_DIR / "kenney_assets" / "nature-kit" / "Models" / "OBJ format")
 
 ASSETS = {
     "ground": {

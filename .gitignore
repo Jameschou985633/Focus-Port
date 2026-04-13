@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -31,8 +31,11 @@ ENV/
 *.swp
 *.swo
 
-# Database (keep template, ignore actual data)
-# focuscrossing.db
+# Database (local data — do not commit)
+*.db
+
+# Local-only Claude / Cursor settings
+.claude/settings.local.json
 
 # Logs
 *.log
@@ -45,7 +48,7 @@ Thumbs.db
 node_modules/
 
 # Frontend build (keep for deployment)
-# eduee-frontend/dist/
+# focusport-frontend/dist/
 
 # Environment
 .env
@@ -54,3 +57,4 @@ node_modules/
 
 # Asset files (too large for git)
 # Downloads/
+

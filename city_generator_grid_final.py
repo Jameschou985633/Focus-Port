@@ -14,6 +14,7 @@ import math
 import os
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import bpy
@@ -33,6 +34,13 @@ TG_PLATFORM = 5
 
 DIRS = {"N": (0, 1), "E": (1, 0), "S": (0, -1), "W": (-1, 0)}
 ORTHO = (0.0, math.pi * 0.5, math.pi, math.pi * 1.5)
+
+try:
+    BASE_DIR = Path(__file__).resolve().parent
+except NameError:
+    BASE_DIR = Path.cwd()
+
+NATURE_ASSET_ROOT = BASE_DIR / "kenney_assets" / "nature-kit" / "Models" / "OBJ format"
 
 
 @dataclass
@@ -57,7 +65,7 @@ class Config:
     commercial_root: str = r"C:\Users\86153\Downloads\asset\kenney_city-kit-commercial_2.1\Models\OBJ format"
     industrial_root: str = r"C:\Users\86153\Downloads\asset\kenney_city-kit-industrial_1.0\Models\OBJ format"
     suburban_root: str = r"C:\Users\86153\Downloads\asset\kenney_city-kit-suburban_20\Models\OBJ format"
-    nature_root: str = r"C:\Users\86153\PycharmProjects\PythonProject2\kenney_assets\nature-kit\Models\OBJ format"
+    nature_root: str = str(NATURE_ASSET_ROOT)
 
 
 CITY_ASSETS = {

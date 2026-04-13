@@ -1,17 +1,15 @@
-# FocusCrossing 部署配置
-# 使用 Render Blueprint 一键部署
-
+﻿# FocusPort 閮ㄧ讲閰嶇疆
+# 浣跨敤 Render Blueprint 涓€閿儴缃?
 services:
   - type: web
-    name: focuscrossing
+    name: focusport
     env: python
-    region: singapore  # 新加坡区域，国内访问较稳定
-    plan: free
-    # 构建步骤：安装Python依赖 + 构建前端
+    region: singapore  # 鏂板姞鍧″尯鍩燂紝鍥藉唴璁块棶杈冪ǔ瀹?    plan: free
+    # 鏋勫缓姝ラ锛氬畨瑁匬ython渚濊禆 + 鏋勫缓鍓嶇
     buildCommand: |
       pip install -r requirements.txt
-      cd eduee-frontend && npm install && npm run build
-    # 启动命令
+      cd focusport-frontend && npm install && npm run build
+    # 鍚姩鍛戒护
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
@@ -19,3 +17,4 @@ services:
         value: 3.11.0
       - key: NODE_VERSION
         value: 18
+

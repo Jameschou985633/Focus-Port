@@ -17,6 +17,7 @@ import math
 import os
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import bpy
@@ -50,12 +51,17 @@ ROTATION_FACE_TO_ROAD = {
     "W": math.pi * 0.5,
 }
 
+try:
+    BASE_DIR = Path(__file__).resolve().parent
+except NameError:
+    BASE_DIR = Path.cwd()
+
 ASSET_ROOTS = {
     "roads": r"C:\Users\86153\Downloads\asset\kenney_city-kit-roads\Models\OBJ format",
     "commercial": r"C:\Users\86153\Downloads\asset\kenney_city-kit-commercial_2.1\Models\OBJ format",
     "suburban": r"C:\Users\86153\Downloads\asset\kenney_city-kit-suburban_20\Models\OBJ format",
     "industrial": r"C:\Users\86153\Downloads\asset\kenney_city-kit-industrial_1.0\Models\OBJ format",
-    "nature": r"C:\Users\86153\PycharmProjects\PythonProject2\kenney_assets\nature-kit\Models\OBJ format",
+    "nature": str(BASE_DIR / "kenney_assets" / "nature-kit" / "Models" / "OBJ format"),
 }
 
 ASSET_DICT = {

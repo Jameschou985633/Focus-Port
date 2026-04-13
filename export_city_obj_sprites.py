@@ -18,9 +18,14 @@ import bpy
 from mathutils import Vector
 
 
+try:
+    BASE_DIR = Path(__file__).resolve().parent
+except NameError:
+    BASE_DIR = Path.cwd()
+
 ASSET_ROOT = Path(r"C:\Users\86153\Downloads\asset")
-OUTPUT_ROOT = Path(r"C:\Users\86153\PycharmProjects\PythonProject2\city_sprites")
-MANIFEST_PATH = Path(r"C:\Users\86153\PycharmProjects\PythonProject2\city_sprite_manifest.json")
+OUTPUT_ROOT = BASE_DIR / "city_sprites"
+MANIFEST_PATH = BASE_DIR / "city_sprite_manifest.json"
 
 SOURCE_PACKS: Dict[str, Path] = {
     "commercial": ASSET_ROOT / "kenney_city-kit-commercial_2.1" / "Models" / "OBJ format",

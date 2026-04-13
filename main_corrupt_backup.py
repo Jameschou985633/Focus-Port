@@ -10,9 +10,9 @@ from openai import OpenAI
 import fitz
 import docx
 
-DB_PATH = os.path.join(BASE_DIR, "focuscrossing.db")
+DB_PATH = os.path.join(BASE_DIR, "focusport.db")
 DB_PATH = os.path.join(BASE_DIR, DB_PATH)
-FRONTEND_DIR = os.path.join(BASE_DIR, "eduee-frontend", "dist")  # Vue 鏋勫缓鐩綍
+FRONTEND_DIR = os.path.join(BASE_DIR, "focusport-frontend", "dist")  # Vue 鏋勫缓鐩綍
 CITY_ASSET_ROOT = r"C:\Users\86153\Downloads\asset"
 CITY_KIT_OBJ_DIRS = {
     "commercial": os.path.join(CITY_ASSET_ROOT, "kenney_city-kit-commercial_2.1", "Models", "OBJ format"),
@@ -603,7 +603,7 @@ def import_kenney_nature_kit():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    models_dir = os.path.join(BASE_DIR, "eduee-frontend", "public", "models", "GLTF format")
+    models_dir = os.path.join(BASE_DIR, "focusport-frontend", "public", "models", "GLTF format")
     if not os.path.exists(models_dir):
         conn.close()
         return
@@ -2870,7 +2870,7 @@ async def get_user_skins(username: str):
     return {"owned_skins": owned_skins}
 
 
-# ================= 馃攱 FocusCrossing 涓撴敞鑳介噺妯″潡 =================
+# ================= 馃攱 FocusPort 涓撴敞鑳介噺妯″潡 =================
 
 class FocusEnergyAdd(BaseModel):
     username: str
@@ -3272,7 +3272,7 @@ async def ai_chat(data: AIChatRequest):
     try:
         # 鑾峰彇鐢ㄦ埛鏁版嵁浣滀负涓婁笅鏂?        user_growth = get_or_create_growth(data.username)
 
-        system_prompt = f"""浣犳槸涓€涓弸濂界殑瀛︿範鍔╂墜锛屽悕鍙?Focus"锛屾槸FocusCrossing涓撴敞宀涚殑AI鍔╂墜銆?鐢ㄦ埛 {data.username} 鐨勫綋鍓嶆暟鎹細
+        system_prompt = f"""浣犳槸涓€涓弸濂界殑瀛︿範鍔╂墜锛屽悕鍙?Focus"锛屾槸FocusPort涓撴敞宀涚殑AI鍔╂墜銆?鐢ㄦ埛 {data.username} 鐨勫綋鍓嶆暟鎹細
 - 绛夌骇: {user_growth['level']}
 - 缁忛獙鍊? {user_growth['exp']}
 - 涓撴敞鏃堕暱: {user_growth['total_focus_minutes']}鍒嗛挓
@@ -5297,4 +5297,5 @@ if __name__ == "__main__":
         print(f"[WARN] 8000 绔彛琚崰鐢紝宸茶嚜鍔ㄥ垏鎹㈠埌 http://127.0.0.1:{startup_port}")
 
     uvicorn.run(app, host="0.0.0.0", port=startup_port)
+
 
