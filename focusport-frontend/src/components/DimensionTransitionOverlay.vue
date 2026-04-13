@@ -7,7 +7,7 @@ const dimensionStore = useDimensionStore()
 const targetLabel = computed(() => (
   dimensionStore.transitionTarget === 'PHYSICAL'
     ? '[ 物理实体舱 · PHYSICAL BAY ]'
-    : '[ 地球模拟器 · GAIA SIMULATOR ]'
+    : '[ 盖亚演算仓 · GAIA ENGINE ]'
 ))
 </script>
 

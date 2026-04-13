@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import SpaceButton from '../base/SpaceButton.vue'
@@ -44,6 +44,20 @@ const themes = [
 ]
 
 const roomCountLabel = computed(() => `${rooms.value.length} ACTIVE BERTHS`)
+
+const searchQuery = ref('')
+const filteredRooms = computed(() => {
+  if (!searchQuery.value.trim()) return rooms.value
+  const q = searchQuery.value.toLowerCase()
+  return rooms.value.filter(r =>
+    r.name.toLowerCase().includes(q) ||
+    (r.description || '').toLowerCase().includes(q) ||
+    (r.owner_username || '').toLowerCase().includes(q) ||
+    r.theme.toLowerCase().includes(q)
+  )
+})
+
+let refreshInterval = null
 
 const loadRooms = async () => {
   isLoading.value = true
@@ -117,6 +131,11 @@ const getThemeIcon = (theme) => {
 onMounted(() => {
   loadRooms()
   loadUserSunshine()
+  refreshInterval = setInterval(loadRooms, 30000)
+})
+
+onUnmounted(() => {
+  if (refreshInterval) clearInterval(refreshInterval)
 })
 </script>
 
@@ -177,14 +196,18 @@ onMounted(() => {
         </SpaceButton>
       </div>
 
+      <div v-if="!isLoading && rooms.length" class="search-bar">
+        <input v-model="searchQuery" type="text" placeholder="Search berths by name, theme, or commander..." class="space-input">
+      </div>
+
       <div v-if="isLoading" class="loading-state">
         <div class="space-spinner"></div>
         <p>Linking to Fleet Nexus...</p>
       </div>
 
-      <div v-else-if="rooms.length" class="rooms-grid">
+      <div v-else-if="filteredRooms.length" class="rooms-grid">
         <SpaceCard
-          v-for="room in rooms"
+          v-for="room in filteredRooms"
           :key="room.id"
           :title="room.name"
           :subtitle="room.description || 'Fleet briefing channel open.'"
@@ -198,6 +221,7 @@ onMounted(() => {
               <span class="status-dot online"></span>
               {{ room.current_users || 0 }}/{{ room.max_seats }} docked
             </span>
+            <span class="room-owner">👨‍✈️ {{ room.owner_username || 'Unknown' }}</span>
             <span class="room-visibility">{{ room.is_public === false ? 'Restricted' : 'Open Relay' }}</span>
           </div>
         </SpaceCard>
@@ -205,7 +229,11 @@ onMounted(() => {
 
       <div v-else class="empty-state">
         <div class="empty-icon">NEXUS</div>
-        <p>No active berths. Open the first Fleet Nexus room and broadcast a mission lane.</p>
+        <h3 style="margin: 0 0 10px; color: #9ef8ff;">No Active Berths Detected</h3>
+        <p>All fleet channels are silent. Deploy the first berth and initiate a shared focus session.</p>
+        <SpaceButton variant="primary" style="margin-top: 16px;" @click="showCreateModal = true">
+          + Deploy First Berth
+        </SpaceButton>
       </div>
     </section>
 
@@ -383,9 +411,18 @@ onMounted(() => {
   border-top: 1px solid rgba(0, 255, 255, 0.14);
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
   color: rgba(214, 247, 255, 0.72);
   font-size: 12px;
+}
+
+.room-owner {
+  color: rgba(164, 245, 255, 0.6);
+}
+
+.search-bar {
+  margin-bottom: 16px;
 }
 
 .online-count {

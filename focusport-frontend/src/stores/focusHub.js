@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { differenceInCalendarDays, format, isValid, parseISO } from 'date-fns'
+import { focusApi } from '../api'
 
 const STORAGE_PREFIX = 'fc.focusHub'
 
@@ -21,7 +22,11 @@ const createDefaultPomodoro = () => ({
   isRunning: false,
   startedAt: '',
   endsAt: '',
-  completedFocusSessions: 0
+  completedFocusSessions: 0,
+  taskDifficulty: 'L1',
+  linkedTaskId: '',
+  linkedTaskTitle: '',
+  pendingSettlement: false
 })
 
 const safeParse = (raw) => {
@@ -60,7 +65,11 @@ const normalizePomodoro = (value = {}) => {
     endsAt: String(value.endsAt || ''),
     completedFocusSessions: Number.isFinite(Number(value.completedFocusSessions))
       ? Math.max(0, Math.round(Number(value.completedFocusSessions)))
-      : 0
+      : 0,
+    taskDifficulty: value.taskDifficulty === 'L2' ? 'L2' : 'L1',
+    linkedTaskId: String(value.linkedTaskId || ''),
+    linkedTaskTitle: String(value.linkedTaskTitle || ''),
+    pendingSettlement: Boolean(value.pendingSettlement)
   }
 }
 
@@ -196,7 +205,16 @@ export const useFocusHubStore = defineStore('focusHub', () => {
     const diffMs = endTime.getTime() - Date.now()
     if (diffMs <= 0) {
       stopTicker()
-      moveToNextPomodoroPhase()
+      if (pomodoro.value.mode === 'focus') {
+        pomodoro.value = {
+          ...pomodoro.value,
+          remainingSeconds: 0,
+          isRunning: false,
+          pendingSettlement: true
+        }
+      } else {
+        moveToNextPomodoroPhase()
+      }
       return
     }
 
@@ -443,6 +461,98 @@ export const useFocusHubStore = defineStore('focusHub', () => {
     stopTicker()
   }
 
+  const setFocusMinutes = (minutes) => {
+    if (pomodoro.value.isRunning) return
+    const mins = Number(minutes) > 0 ? Number(minutes) : 25
+    pomodoro.value = {
+      ...pomodoro.value,
+      focusMinutes: mins,
+      remainingSeconds: mins * 60,
+      startedAt: '',
+      endsAt: ''
+    }
+  }
+
+  const setTaskDifficulty = (level) => {
+    if (pomodoro.value.isRunning) return
+    pomodoro.value = {
+      ...pomodoro.value,
+      taskDifficulty: level === 'L2' ? 'L2' : 'L1'
+    }
+  }
+
+  const linkTimelineTask = (task) => {
+    if (!task) return
+    const minutes = Number(task.minutes || 25) > 0 ? Number(task.minutes) : 25
+    pomodoro.value = {
+      ...pomodoro.value,
+      focusMinutes: minutes,
+      remainingSeconds: pomodoro.value.isRunning ? pomodoro.value.remainingSeconds : minutes * 60,
+      linkedTaskId: String(task.id || ''),
+      linkedTaskTitle: String(task.task || task.title || '')
+    }
+  }
+
+  const clearLinkedTask = () => {
+    pomodoro.value = {
+      ...pomodoro.value,
+      linkedTaskId: '',
+      linkedTaskTitle: ''
+    }
+  }
+
+  const completeFocusSession = async ({ username, duration, subject, sessionLog, taskDifficulty }) => {
+    const response = await focusApi.complete(
+      username || hydratedUsername.value || currentUsername(),
+      duration || pomodoro.value.focusMinutes,
+      subject || 'Focus Session',
+      sessionLog || '',
+      taskDifficulty || pomodoro.value.taskDifficulty
+    )
+
+    pomodoro.value = {
+      ...pomodoro.value,
+      completedFocusSessions: pomodoro.value.completedFocusSessions + 1
+    }
+
+    if (pomodoro.value.linkedTaskId) {
+      try {
+        const { useMasterTimelineStore } = await import('./masterTimeline')
+        const timelineStore = useMasterTimelineStore()
+        timelineStore.completeTask(pomodoro.value.linkedTaskId)
+      } catch (e) {
+        console.warn('Failed to complete timeline task', e)
+      }
+      pomodoro.value = {
+        ...pomodoro.value,
+        linkedTaskId: '',
+        linkedTaskTitle: ''
+      }
+    }
+
+    return response.data
+  }
+
+  const resolveFocusCompletion = () => {
+    pomodoro.value = {
+      ...pomodoro.value,
+      pendingSettlement: false
+    }
+    moveToNextPomodoroPhase()
+  }
+
+  const skipSettlement = () => {
+    pomodoro.value = {
+      ...pomodoro.value,
+      pendingSettlement: false,
+      mode: 'focus',
+      remainingSeconds: pomodoro.value.focusMinutes * 60,
+      isRunning: false,
+      startedAt: '',
+      endsAt: ''
+    }
+  }
+
   watch([lastAccessDate, pomodoro, todayTasks, archiveTasks, weekNodes, countdowns], () => {
     persist()
   }, { deep: true })
@@ -470,6 +580,13 @@ export const useFocusHubStore = defineStore('focusHub', () => {
     getNotesForDate,
     addCountdown,
     deleteCountdown,
-    clearTicker
+    clearTicker,
+    setFocusMinutes,
+    setTaskDifficulty,
+    linkTimelineTask,
+    clearLinkedTask,
+    completeFocusSession,
+    resolveFocusCompletion,
+    skipSettlement
   }
 })

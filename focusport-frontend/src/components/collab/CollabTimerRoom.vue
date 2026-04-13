@@ -5,6 +5,7 @@ import axios from 'axios'
 import SpaceButton from '../base/SpaceButton.vue'
 import SpaceProgressBar from '../base/SpaceProgressBar.vue'
 import SpacePanel from '../base/SpacePanel.vue'
+import BackButton from '../base/BackButton.vue'
 import { WORLD_NAMES, composeWorldLabel } from '../../constants/worldNames'
 
 const route = useRoute()
@@ -46,6 +47,42 @@ const availableEmojis = ['💎', '💧', '🌱', '🌸', '💪', '👍', '❤️
 // 时长选项
 const durationOptions = [25, 45, 60]
 
+// Toast 通知
+const toastMessage = ref('')
+const toastVisible = ref(false)
+const toastReward = ref(0)
+
+// WebSocket 重连
+const wsActive = ref(true)
+const reconnectAttempts = ref(0)
+
+// 主题色
+const themeAccents = {
+  space: { accent: 'rgba(0,255,255,0.34)', glow: 'rgba(0,255,255,0.3)' },
+  nebula: { accent: 'rgba(168,85,247,0.34)', glow: 'rgba(168,85,247,0.3)' },
+  mars: { accent: 'rgba(249,115,22,0.34)', glow: 'rgba(249,115,22,0.3)' },
+  lunar: { accent: 'rgba(226,232,240,0.34)', glow: 'rgba(226,232,240,0.3)' }
+}
+
+// Computed
+const selectedTaskTitle = computed(() => {
+  if (!selectedTaskId.value) return null
+  const task = myTasks.value.find(t => t.id === selectedTaskId.value)
+  return task?.content || task?.title || null
+})
+
+const gridLayout = computed(() => {
+  const seatCount = room.value?.max_seats || 4
+  if (seatCount <= 4) return { columns: 2, maxWidth: '500px' }
+  if (seatCount <= 6) return { columns: 3, maxWidth: '700px' }
+  return { columns: 4, maxWidth: '900px' }
+})
+
+const themeAccent = computed(() => {
+  const theme = room.value?.theme || 'space'
+  return themeAccents[theme] || themeAccents.space
+})
+
 // 加载房间数据
 const loadRoom = async () => {
   try {
@@ -83,6 +120,7 @@ const loadTasks = async () => {
 
 // 连接 WebSocket
 const connectWebSocket = () => {
+  if (!wsActive.value) return
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const wsUrl = `${protocol}//${window.location.host}/ws/greenhouse/${roomId.value}`
 
@@ -90,7 +128,7 @@ const connectWebSocket = () => {
 
   ws.value.onopen = () => {
     isConnected.value = true
-    console.log('WebSocket 已连接')
+    reconnectAttempts.value = 0
   }
 
   ws.value.onmessage = (event) => {
@@ -100,9 +138,11 @@ const connectWebSocket = () => {
 
   ws.value.onclose = () => {
     isConnected.value = false
-    console.log('WebSocket 已断开')
-    // 5秒后重连
-    setTimeout(connectWebSocket, 5000)
+    if (!wsActive.value) return
+    reconnectAttempts.value++
+    if (reconnectAttempts.value < 10) {
+      setTimeout(connectWebSocket, 5000)
+    }
   }
 }
 
@@ -235,7 +275,10 @@ const endGrow = async (status) => {
     isGrowing.value = false
     if (status === 'completed' && res.data.diamonds_earned) {
       userDiamonds.value += res.data.diamonds_earned
-      alert(`🚀 任务完成！获得 ${res.data.diamonds_earned} 钻石！`)
+      toastReward.value = res.data.diamonds_earned
+      toastMessage.value = '专注完成！'
+      toastVisible.value = true
+      setTimeout(() => { toastVisible.value = false }, 4000)
     }
   } catch (err) {
     console.error('结束失败:', err)
@@ -298,6 +341,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  wsActive.value = false
   if (ws.value) ws.value.close()
   if (growTimer.value) clearInterval(growTimer.value)
 })
@@ -308,6 +352,13 @@ onUnmounted(() => {
     <!-- 背景星星效果 -->
     <div class="stars-bg"></div>
 
+    <!-- Toast 通知 -->
+    <div v-if="toastVisible" class="toast-card">
+      <h4>{{ toastMessage }}</h4>
+      <p>本轮专注已结算</p>
+      <div class="toast-reward">+{{ toastReward }} {{ WORLD_NAMES.currency.zh }}</div>
+    </div>
+
     <!-- 加载中 -->
     <div v-if="isLoading" class="loading-state">
       <div class="space-spinner"></div>
@@ -316,10 +367,14 @@ onUnmounted(() => {
 
     <!-- 房间内容 -->
     <div v-else class="room-container">
+      <!-- 返回按钮（仅未入座时显示） -->
+      <BackButton v-if="mySeat === null" to="/collab" label="返回码头" style="margin-bottom: 16px;" />
+
       <!-- 头部 -->
-      <div class="space-header">
+      <div class="space-header" :style="{ borderColor: themeAccent.accent }">
         <div class="header-left">
           <div class="connection-indicator" :style="{ background: connectionColor }"></div>
+          <span v-if="!isConnected" class="connection-warning">LINK LOST · RETRY {{ reconnectAttempts }}</span>
           <div class="room-info">
             <h2>{{ room?.name || composeWorldLabel(WORLD_NAMES.fleetNexus) }}</h2>
             <span class="room-desc">{{ room?.description || 'Shared dock live. Coordinate, focus, and hold the ring.' }}</span>
@@ -332,9 +387,15 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 座位区域 - 网格布局 -->
+      <!-- 座位区域 - 自适应网格 -->
       <div class="seats-area">
-        <div class="seats-grid">
+        <div
+          class="seats-grid"
+          :style="{
+            gridTemplateColumns: `repeat(${gridLayout.columns}, 1fr)`,
+            maxWidth: gridLayout.maxWidth
+          }"
+        >
           <div
             v-for="i in (room?.max_seats || 4)"
             :key="i"
@@ -344,12 +405,12 @@ onUnmounted(() => {
               'occupied': getSeatUser(i - 1),
               'growing': getSeatUser(i - 1) && getGrowingInfo(getSeatUser(i - 1).username)
             }"
+            :style="mySeat === i - 1 ? { borderColor: themeAccent.accent, boxShadow: `0 0 20px ${themeAccent.glow}` } : {}"
           >
             <!-- 空座位 -->
             <template v-if="!getSeatUser(i - 1)">
               <div class="empty-seat">
-                <span class="seat-icon">🪑</span>
-                <span class="seat-label">座位 {{ i }}</span>
+                <span class="seat-label">VACANT · 座位 {{ i }}</span>
                 <SpaceButton
                   v-if="mySeat === null"
                   variant="primary"
@@ -386,11 +447,41 @@ onUnmounted(() => {
                 <template v-if="mySeat === i - 1">
                   <!-- 未开始专注 -->
                   <div v-if="!isGrowing" class="control-panel">
+                    <!-- 时长选择 -->
                     <select v-model="selectedDuration" class="space-select">
                       <option v-for="d in durationOptions" :key="d" :value="d">
                         {{ d }} 分钟
                       </option>
                     </select>
+
+                    <!-- 任务关联 -->
+                    <div v-if="selectedTaskTitle" class="linked-task-chip">
+                      <span>关联:</span>
+                      <strong>{{ selectedTaskTitle }}</strong>
+                      <button type="button" class="linked-task-clear" @click="selectedTaskId = null">&times;</button>
+                    </div>
+
+                    <button type="button" class="task-link-btn" @click="showTaskSelector = !showTaskSelector">
+                      {{ selectedTaskTitle ? '更换任务' : '+ 关联任务' }}
+                    </button>
+
+                    <!-- 任务列表面板 -->
+                    <div v-if="showTaskSelector" class="task-selector-panel">
+                      <div v-if="myTasks.length">
+                        <button
+                          v-for="task in myTasks"
+                          :key="task.id"
+                          type="button"
+                          class="task-option"
+                          :class="{ selected: selectedTaskId === task.id }"
+                          @click="selectedTaskId = task.id; showTaskSelector = false"
+                        >
+                          {{ task.content || task.title }}
+                        </button>
+                      </div>
+                      <div v-else class="task-option-empty">没有待办任务</div>
+                    </div>
+
                     <SpaceButton variant="success" @click="startGrow" glow>
                       Deploy Pulse Core
                     </SpaceButton>
@@ -399,6 +490,10 @@ onUnmounted(() => {
                   <!-- 专注中 -->
                   <div v-else class="growing-panel">
                     <div class="my-timer">{{ formatTime(growProgress) }}</div>
+                    <div v-if="selectedTaskTitle" class="linked-task-chip" style="margin-bottom: 8px;">
+                      <span>关联:</span>
+                      <strong>{{ selectedTaskTitle }}</strong>
+                    </div>
                     <SpaceProgressBar
                       :progress="growProgress"
                       :max="selectedDuration * 60"
@@ -456,40 +551,65 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+            v-for="emoji in emojis"
+            :key="emoji.id"
+            class="floating-emoji"
+            :style="{ left: emoji.x + '%', animationDelay: '0s' }"
+          >
+            {{ emoji.emoji }}
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部操作栏 -->
+      <div class="bottom-bar">
+        <!-- 表情栏 -->
+        <div class="emoji-bar">
+          <SpaceButton
+            v-for="emoji in availableEmojis"
+            :key="emoji"
+            variant="secondary"
+            size="sm"
+            @click="sendEmoji(emoji)"
+          >
+            {{ emoji }}
+          </SpaceButton>
+        </div>
+
+        <!-- 退出按钮 -->
+        <SpaceButton variant="danger" @click="exitRoom">
+          Leave Fleet Nexus
+        </SpaceButton>
+      </div>
+    </div>
+  </div>
+</template>
 
 <style scoped>
 .collab-room-page.space-theme {
   min-height: 100vh;
-  background: linear-gradient(135deg, #0a0f1a 0%, #0f172a 50%, #0a0f1a 100%);
-  padding: 20px;
+  padding: 28px 20px 36px;
+  background: linear-gradient(180deg, #050914 0%, #08111f 48%, #0a192f 100%);
   display: flex;
   flex-direction: column;
   font-family: 'Segoe UI', sans-serif;
+  color: #eefcff;
+  position: relative;
+  overflow: hidden;
 }
 
 /* 星星背景 */
 .stars-bg {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: absolute;
+  inset: 0;
   background-image:
-    radial-gradient(2px 2px at 20px 30px, #fff, transparent),
-    radial-gradient(2px 2px at 40px 70px, rgba(255,255,255,0.8), transparent),
-    radial-gradient(1px 1px at 90px 40px, #fff, transparent),
-    radial-gradient(2px 2px at 160px 120px, rgba(255,255,255,0.6), transparent),
-    radial-gradient(1px 1px at 230px 80px, #fff, transparent),
-    radial-gradient(2px 2px at 300px 150px, rgba(255,255,255,0.7), transparent);
-  background-size: 350px 200px;
-  animation: twinkle 8s ease-in-out infinite;
+    radial-gradient(2px 2px at 20px 30px, rgba(255, 255, 255, 0.92), transparent),
+    radial-gradient(1px 1px at 90px 40px, rgba(255, 255, 255, 0.82), transparent),
+    radial-gradient(2px 2px at 160px 120px, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1px 1px at 260px 60px, rgba(255, 255, 255, 0.76), transparent);
+  background-size: 360px 220px;
+  opacity: 0.55;
   pointer-events: none;
-  z-index: 0;
-}
-
-@keyframes twinkle {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
 }
 
 .loading-state {
@@ -498,17 +618,18 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex: 1;
-  color: white;
+  color: rgba(214, 247, 255, 0.68);
   z-index: 1;
 }
 
 .space-spinner {
-  width: 50px;
-  height: 50px;
-  border: 4px solid rgba(59, 130, 246, 0.3);
-  border-top-color: #3b82f6;
-  border-radius: 8px;
+  width: 44px;
+  height: 44px;
+  border: 3px solid rgba(0, 255, 255, 0.16);
+  border-top-color: #00ffff;
+  border-radius: 999px;
   animation: spin 1s linear infinite;
+  margin: 0 auto 14px;
 }
 
 @keyframes spin {
@@ -530,11 +651,15 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  border: 2px solid #3b82f6;
-  border-radius: 8px;
-  margin-bottom: 20px;
+  gap: 18px;
+  padding: 22px;
+  background:
+    linear-gradient(180deg, rgba(10, 26, 46, 0.96), rgba(6, 13, 30, 0.98)),
+    rgba(4, 9, 20, 0.92);
+  border: 1px solid rgba(0, 255, 255, 0.16);
+  border-radius: 26px;
+  box-shadow: 0 24px 56px rgba(2, 8, 18, 0.32);
+  margin-bottom: 22px;
 }
 
 .header-left {
@@ -546,7 +671,8 @@ onUnmounted(() => {
 .connection-indicator {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: 999px;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.55);
   animation: pulse 2s infinite;
 }
 
@@ -555,17 +681,25 @@ onUnmounted(() => {
   50% { opacity: 0.5; }
 }
 
+.connection-warning {
+  color: #ff9aa7;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .room-info h2 {
-  color: #3b82f6;
-  margin: 0 0 4px 0;
+  color: #eefcff;
+  margin: 0 0 4px;
   font-size: 1.3em;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 16px rgba(0, 255, 255, 0.2);
 }
 
 .room-desc {
-  color: rgba(255,255,255,0.6);
+  color: rgba(214, 247, 255, 0.72);
   font-size: 0.85em;
 }
 
@@ -573,13 +707,16 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(251, 191, 36, 0.15);
-  padding: 8px 16px;
-  border: 1px solid rgba(251, 191, 36, 0.4);
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 10px 16px;
+  border: 1px solid rgba(0, 255, 255, 0.14);
+  border-radius: 18px;
 }
 
-.diamonds-icon { font-size: 1.3em; }
+.diamonds-icon {
+  font-size: 1.3em;
+  color: #fbbf24;
+}
 .diamonds-value {
   color: #fbbf24;
   font-weight: bold;
@@ -604,18 +741,20 @@ onUnmounted(() => {
 .seats-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
+  gap: 18px;
   max-width: 500px;
   width: 100%;
 }
 
 .seat {
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  border: 2px solid #334155;
-  border-radius: 8px;
-  padding: 20px;
+  background:
+    linear-gradient(180deg, rgba(10, 26, 46, 0.96), rgba(6, 13, 30, 0.98)),
+    rgba(4, 9, 20, 0.92);
+  border: 1px solid rgba(0, 255, 255, 0.16);
+  border-radius: 18px;
+  padding: 22px;
   text-align: center;
-  transition: all 0.3s ease;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
   min-height: 160px;
   display: flex;
   flex-direction: column;
@@ -624,16 +763,16 @@ onUnmounted(() => {
 }
 
 .seat:hover {
-  border-color: #475569;
+  border-color: rgba(0, 255, 255, 0.3);
 }
 
 .seat.my-seat {
-  border-color: #3b82f6;
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+  border-color: rgba(0, 255, 255, 0.34);
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
 }
 
 .seat.growing {
-  border-color: #10b981;
+  border-color: rgba(16, 185, 129, 0.34);
   box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
 }
 
@@ -650,10 +789,10 @@ onUnmounted(() => {
 }
 
 .seat-label {
-  color: rgba(255,255,255,0.5);
+  color: rgba(164, 245, 255, 0.68);
   font-size: 0.8em;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.14em;
 }
 
 .occupied-seat {
@@ -669,20 +808,21 @@ onUnmounted(() => {
 
 .username {
   font-weight: 600;
-  color: white;
+  color: #eefcff;
   font-size: 0.95em;
 }
 
 .timer-display {
-  font-size: 1.8em;
+  font-size: 2.5em;
   font-weight: bold;
-  color: #3b82f6;
-  font-family: 'Courier New', monospace;
+  color: #eefcff;
+  font-family: 'Roboto Mono', 'Consolas', monospace;
+  text-shadow: 0 0 16px rgba(0, 255, 255, 0.3);
   margin-top: 8px;
 }
 
 .status.growing {
-  color: #10b981;
+  color: rgba(16, 185, 129, 0.9);
   font-size: 0.85em;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -702,18 +842,20 @@ onUnmounted(() => {
 
 .space-select {
   width: 100%;
-  padding: 10px;
-  background: #0f172a;
-  border: 2px solid #334155;
-  border-radius: 6px;
-  color: white;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  background: rgba(7, 16, 34, 0.94);
+  border: 1px solid rgba(0, 255, 255, 0.14);
+  border-radius: 14px;
+  color: #eefcff;
   font-size: 14px;
   cursor: pointer;
+  outline: none;
 }
 
 .space-select:focus {
-  outline: none;
-  border-color: #3b82f6;
+  border-color: rgba(0, 255, 255, 0.42);
+  box-shadow: 0 0 0 1px rgba(0, 255, 255, 0.16), 0 0 18px rgba(0, 255, 255, 0.08);
 }
 
 .growing-panel {
@@ -722,10 +864,11 @@ onUnmounted(() => {
 }
 
 .my-timer {
-  font-size: 2.2em;
+  font-size: 3em;
   font-weight: bold;
-  color: #3b82f6;
-  font-family: 'Courier New', monospace;
+  color: #eefcff;
+  font-family: 'Roboto Mono', 'Consolas', monospace;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
   margin-bottom: 8px;
 }
 
@@ -781,16 +924,184 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  border: 2px solid #334155;
-  border-radius: 8px;
-  margin-top: 20px;
+  padding: 16px 22px;
+  background:
+    linear-gradient(180deg, rgba(10, 26, 46, 0.96), rgba(6, 13, 30, 0.98)),
+    rgba(4, 9, 20, 0.92);
+  border: 1px solid rgba(0, 255, 255, 0.16);
+  border-radius: 26px;
+  box-shadow: 0 24px 56px rgba(2, 8, 18, 0.32);
+  margin-top: 22px;
 }
 
 .emoji-bar {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* 任务选择器 */
+.task-selector-panel {
+  background: rgba(7, 16, 34, 0.94);
+  border: 1px solid rgba(0, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 255, 255, 0.4) rgba(10, 25, 47, 0.6);
+}
+
+.task-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: #eefcff;
+  width: 100%;
+  font-size: 13px;
+}
+
+.task-option:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.task-option.selected {
+  background: rgba(0, 255, 255, 0.1);
+  border: 1px solid rgba(0, 255, 255, 0.24);
+}
+
+.task-option-empty {
+  padding: 16px;
+  text-align: center;
+  color: rgba(214, 247, 255, 0.5);
+  font-size: 13px;
+}
+
+.linked-task-chip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(0, 255, 255, 0.06);
+  border: 1px solid rgba(0, 255, 255, 0.14);
+  font-size: 12px;
+  color: rgba(214, 247, 255, 0.8);
+}
+
+.linked-task-chip strong {
+  color: #9ef8ff;
+}
+
+.linked-task-clear {
+  background: none;
+  border: none;
+  color: rgba(255, 154, 167, 0.8);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.linked-task-clear:hover {
+  color: #ff9aa7;
+  background: rgba(255, 154, 167, 0.1);
+}
+
+.task-link-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px dashed rgba(0, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(164, 245, 255, 0.68);
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.task-link-btn:hover {
+  border-color: rgba(0, 255, 255, 0.36);
+  background: rgba(0, 255, 255, 0.04);
+}
+
+/* Toast 通知 */
+.toast-card {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  padding: 18px 24px;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(16, 46, 26, 0.96), rgba(8, 30, 16, 0.98)),
+    rgba(4, 20, 10, 0.92);
+  border: 1px solid rgba(16, 185, 129, 0.34);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.4), 0 0 24px rgba(16, 185, 129, 0.2);
+  backdrop-filter: blur(18px);
+  color: #eefcff;
+  text-align: center;
+  animation: toastIn 0.3s ease-out;
+}
+
+.toast-card h4 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: #6ee7b7;
+}
+
+.toast-card p {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(214, 247, 255, 0.72);
+}
+
+.toast-reward {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .space-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .diamonds-display {
+    justify-content: center;
+  }
+
+  .bottom-bar {
+    flex-direction: column;
+    gap: 12px;
+  }
 }
 </style>

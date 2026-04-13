@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { unifiedShopApi } from '../api'
 import { useDimensionStore } from '../stores/dimension'
@@ -27,6 +27,12 @@ const hoveredCell = ref(null)
 const feedback = ref('')
 const isLoading = ref(false)
 const isSubmitting = ref(false)
+
+const zoomScale = ref(1)
+const baseFitScale = ref(1)
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 2.0
+const ZOOM_STEP = 0.15
 
 const gridConfig = computed(() => manifest.value.grid || { cols: 20, rows: 20, tile_width: 96, tile_height: 48 })
 const tileWidth = computed(() => Number(gridConfig.value.tile_width || 96))
@@ -77,18 +83,21 @@ const toIso = (x, y) => ({
 
 const screenToGrid = (clientX, clientY) => {
   if (!stageRef.value) return null
-  const rect = stageRef.value.getBoundingClientRect()
-  const localX = clientX - rect.left
-  const localY = clientY - rect.top
-  const normalizedX = (localX - originX.value) / (tileWidth.value / 2)
-  const normalizedY = (localY - originY.value) / (tileHeight.value / 2)
+  const stageEl = stageRef.value
+  const rect = stageEl.getBoundingClientRect()
+  const localX = clientX - rect.left + stageEl.scrollLeft
+  const localY = clientY - rect.top + stageEl.scrollTop
+  const sceneX = localX / zoomScale.value
+  const sceneY = localY / zoomScale.value
+  const normalizedX = (sceneX - originX.value) / (tileWidth.value / 2)
+  const normalizedY = (sceneY - originY.value) / (tileHeight.value / 2)
   const gridX = Math.floor((normalizedY + normalizedX) / 2)
   const gridY = Math.floor((normalizedY - normalizedX) / 2)
 
   return {
     x: gridX,
     y: gridY,
-    localX,
+    localX: sceneX,
     localY
   }
 }
@@ -281,6 +290,50 @@ watch(activePlacementItem, (nextItem) => {
   feedback.value = `正在为 ${nextItem.nameCn || nextItem.name} 准备 GAIA 全息放置。`
 })
 
+const computeFitScale = () => {
+  if (!stageRef.value) return 1
+  const stageEl = stageRef.value
+  const style = getComputedStyle(stageEl)
+  const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+  const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+  const availW = stageEl.clientWidth - padX
+  const availH = stageEl.clientHeight - padY
+  if (availW <= 0 || availH <= 0) return 1
+  const scaleX = availW / sceneWidth.value
+  const scaleY = availH / sceneHeight.value
+  return Math.min(scaleX, scaleY, 1)
+}
+
+let resizeObserver = null
+
+const recalcFitScale = () => {
+  const fit = computeFitScale()
+  const oldBase = baseFitScale.value
+  baseFitScale.value = fit
+  if (Math.abs(zoomScale.value - oldBase) < 0.001) {
+    zoomScale.value = fit
+  }
+}
+
+const zoomIn = () => {
+  zoomScale.value = Math.min(zoomScale.value + ZOOM_STEP, ZOOM_MAX)
+}
+
+const zoomOut = () => {
+  zoomScale.value = Math.max(zoomScale.value - ZOOM_STEP, ZOOM_MIN)
+}
+
+const zoomReset = () => {
+  zoomScale.value = baseFitScale.value
+}
+
+const handleStageWheel = (event) => {
+  if (!event.ctrlKey && !event.metaKey) return
+  event.preventDefault()
+  const delta = event.deltaY > 0 ? -ZOOM_STEP * 0.5 : ZOOM_STEP * 0.5
+  zoomScale.value = Math.max(ZOOM_MIN, Math.min(zoomScale.value + delta, ZOOM_MAX))
+}
+
 onMounted(async () => {
   isLoading.value = true
   await Promise.all([
@@ -288,6 +341,19 @@ onMounted(async () => {
     inventoryStore.refreshPlacedItems(username.value)
   ])
   isLoading.value = false
+  await nextTick()
+  recalcFitScale()
+  if (stageRef.value) {
+    resizeObserver = new ResizeObserver(() => recalcFitScale())
+    resizeObserver.observe(stageRef.value)
+  }
+})
+
+onUnmounted(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
 })
 </script>
 
@@ -355,62 +421,87 @@ onMounted(async () => {
       <div class="iso-stage-wrap">
         <div v-if="isLoading" class="stage-loading kenney-hud-panel">正在同步 GAIA 全息网格...</div>
 
-        <div
-          v-else
-          ref="stageRef"
-          class="iso-stage kenney-hud-panel"
-          @mousemove="handleScenePointerMove"
-          @mouseleave="clearHoveredCell"
-          @click="placeCurrentItem"
-        >
-          <div class="scene-surface" :style="{ width: `${sceneWidth}px`, height: `${sceneHeight}px` }">
-            <div
-              v-for="cell in gridCells"
-              :key="cell.key"
-              class="iso-cell"
-              :class="{ hovered: hoveredCell?.x === cell.x && hoveredCell?.y === cell.y }"
-              :style="gridCellStyle(cell)"
-            >
-              <span class="grid-index">{{ cell.x }},{{ cell.y }}</span>
-            </div>
-
-            <div
-              v-for="cell in previewCells"
-              :key="`preview-${cell.x}-${cell.y}`"
-              class="preview-footprint"
-              :class="{ invalid: !previewValid }"
-              :style="footprintStyle(cell)"
-            ></div>
-
-            <button
-              v-if="activePlacementItem && previewSpriteStyle"
-              type="button"
-              class="placed-sprite ghost"
-              :class="{ invalid: !previewValid }"
-              :style="previewSpriteStyle"
-              @click.stop="placeCurrentItem"
-            >
-              <img
-                :src="activePlacementItem.previewPath || activePlacementItem.spritePath"
-                :alt="activePlacementItem.nameCn || activePlacementItem.name"
-              />
-              <span class="placed-label">{{ activePlacementItem.nameCn || activePlacementItem.name }}</span>
-            </button>
-
-            <button
-              v-for="item in gaiaPlacedItems"
-              :key="item.id"
-              type="button"
-              class="placed-sprite"
-              :class="{ selected: selectedPlacedId === item.id, vehicle: item.subcategory === 'vehicles' }"
-              :style="placedItemStyle(item)"
-              @click.stop="selectedPlacedId = item.id"
-            >
-              <img :src="item.spritePath || item.previewPath || item.assetPath" :alt="item.nameCn || item.name" />
-              <span class="placed-label">{{ item.nameCn || item.name }}</span>
-            </button>
+        <template v-else>
+          <div class="zoom-bar">
+            <button type="button" class="zoom-btn" :disabled="zoomScale <= ZOOM_MIN" @click="zoomOut">&minus;</button>
+            <span class="zoom-label">{{ Math.round(zoomScale * 100) }}%</span>
+            <button type="button" class="zoom-btn" :disabled="zoomScale >= ZOOM_MAX" @click="zoomIn">&plus;</button>
+            <button type="button" class="zoom-btn reset" @click="zoomReset">适配</button>
           </div>
-        </div>
+
+          <div
+            ref="stageRef"
+            class="iso-stage kenney-hud-panel"
+            @mousemove="handleScenePointerMove"
+            @mouseleave="clearHoveredCell"
+            @click="placeCurrentItem"
+            @wheel="handleStageWheel"
+          >
+            <div
+              class="scene-surface-wrapper"
+              :style="{
+                width: `${sceneWidth * zoomScale}px`,
+                height: `${sceneHeight * zoomScale}px`
+              }"
+            >
+              <div
+                class="scene-surface"
+                :style="{
+                  width: `${sceneWidth}px`,
+                  height: `${sceneHeight}px`,
+                  transform: `scale(${zoomScale})`,
+                  transformOrigin: 'top left'
+                }"
+              >
+                <div
+                  v-for="cell in gridCells"
+                  :key="cell.key"
+                  class="iso-cell"
+                  :class="{ hovered: hoveredCell?.x === cell.x && hoveredCell?.y === cell.y }"
+                  :style="gridCellStyle(cell)"
+                >
+                  <span class="grid-index">{{ cell.x }},{{ cell.y }}</span>
+                </div>
+
+                <div
+                  v-for="cell in previewCells"
+                  :key="`preview-${cell.x}-${cell.y}`"
+                  class="preview-footprint"
+                  :class="{ invalid: !previewValid }"
+                  :style="footprintStyle(cell)"
+                ></div>
+
+                <button
+                  v-if="activePlacementItem && previewSpriteStyle"
+                  type="button"
+                  class="placed-sprite ghost"
+                  :class="{ invalid: !previewValid }"
+                  :style="previewSpriteStyle"
+                  @click.stop="placeCurrentItem"
+                >
+                  <img
+                    :src="activePlacementItem.previewPath || activePlacementItem.spritePath"
+                    :alt="activePlacementItem.nameCn || activePlacementItem.name"
+                  />
+                  <span class="placed-label">{{ activePlacementItem.nameCn || activePlacementItem.name }}</span>
+                </button>
+
+                <button
+                  v-for="item in gaiaPlacedItems"
+                  :key="item.id"
+                  type="button"
+                  class="placed-sprite"
+                  :class="{ selected: selectedPlacedId === item.id, vehicle: item.subcategory === 'vehicles' }"
+                  :style="placedItemStyle(item)"
+                  @click.stop="selectedPlacedId = item.id"
+                >
+                  <img :src="item.spritePath || item.previewPath || item.assetPath" :alt="item.nameCn || item.name" />
+                  <span class="placed-label">{{ item.nameCn || item.name }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
     </section>
   </div>
@@ -544,7 +635,7 @@ onMounted(async () => {
 
 .stage-loading,
 .iso-stage {
-  min-height: calc(100vh - 170px);
+  min-height: max(400px, calc(100vh - 220px));
   padding: 18px;
 }
 
@@ -561,9 +652,16 @@ onMounted(async () => {
     linear-gradient(180deg, rgba(10, 25, 47, 0.92), rgba(6, 11, 22, 0.96));
 }
 
-.scene-surface {
+.scene-surface-wrapper {
   position: relative;
   margin: 0 auto;
+  overflow: hidden;
+}
+
+.scene-surface {
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 .iso-cell,
@@ -682,5 +780,60 @@ onMounted(async () => {
   .header-actions {
     justify-content: flex-start;
   }
+
+  .zoom-bar {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+  }
+}
+
+.zoom-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(8, 18, 44, 0.92);
+  border: 1px solid rgba(115, 224, 255, 0.18);
+  width: fit-content;
+}
+
+.zoom-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(115, 224, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eef7ff;
+  font-size: 18px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease;
+}
+
+.zoom-btn:hover:not(:disabled) {
+  background: rgba(47, 216, 255, 0.16);
+}
+
+.zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.zoom-btn.reset {
+  width: auto;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.zoom-label {
+  min-width: 48px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(156, 230, 255, 0.84);
 }
 </style>

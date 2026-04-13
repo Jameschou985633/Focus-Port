@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { addDays, differenceInCalendarDays, format, startOfWeek } from 'date-fns'
 import { useUserStore } from '../stores/user'
 import { useFocusHubStore } from '../stores/focusHub'
+import P0PilotPanel from './P0PilotPanel.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -14,6 +15,12 @@ const showArchive = ref(false)
 const newTaskTitle = ref('')
 const countdownTitle = ref('')
 const countdownDate = ref('')
+const showHubSettlement = ref(false)
+const hubSessionLog = ref('')
+const isHubSettling = ref(false)
+const enableP0Pilot = import.meta.env.VITE_ENABLE_P0_PILOT === 'true'
+
+const durationOptions = [15, 25, 30, 45, 60]
 
 const formattedTimer = computed(() => {
   const total = Math.max(0, Number(focusHubStore.pomodoro.remainingSeconds) || 0)
@@ -27,7 +34,9 @@ const phaseLabel = computed(() => (
 ))
 
 const phaseDescription = computed(() => (
-  focusHubStore.pomodoro.mode === 'break' ? '5 min tactical reset' : '25 min deep work loop'
+  focusHubStore.pomodoro.mode === 'break'
+    ? `${focusHubStore.pomodoro.breakMinutes} min tactical reset`
+    : `${focusHubStore.pomodoro.focusMinutes} min deep work loop`
 ))
 
 const totalPhaseSeconds = computed(() => (
@@ -109,9 +118,38 @@ onMounted(() => {
   focusHubStore.hydrate(userStore.username)
 })
 
-onUnmounted(() => {
-  focusHubStore.clearTicker()
+watch(() => focusHubStore.pomodoro.pendingSettlement, (pending) => {
+  if (pending) {
+    showHubSettlement.value = true
+    hubSessionLog.value = ''
+  }
 })
+
+const submitHubSettlement = async () => {
+  if (isHubSettling.value) return
+  isHubSettling.value = true
+  try {
+    await focusHubStore.completeFocusSession({
+      username: userStore.username,
+      duration: focusHubStore.pomodoro.focusMinutes,
+      subject: '自律中枢番茄钟',
+      sessionLog: hubSessionLog.value,
+      taskDifficulty: focusHubStore.pomodoro.taskDifficulty
+    })
+    focusHubStore.resolveFocusCompletion()
+    showHubSettlement.value = false
+  } catch (error) {
+    console.error('Hub settlement failed', error)
+    window.alert('结算失败，请稍后再试。')
+  } finally {
+    isHubSettling.value = false
+  }
+}
+
+const skipHubSettlement = () => {
+  focusHubStore.skipSettlement()
+  showHubSettlement.value = false
+}
 </script>
 
 <template>
@@ -141,6 +179,8 @@ onUnmounted(() => {
           </button>
         </div>
       </header>
+
+      <P0PilotPanel v-if="enableP0Pilot" />
 
       <section class="macro-drawer card glass animate-fade-in" :class="{ open: isMacroOpen }">
         <div class="drawer-head">
@@ -273,12 +313,56 @@ onUnmounted(() => {
             </span>
           </div>
 
+          <div v-if="focusHubStore.pomodoro.mode !== 'break'" class="hub-duration-pills">
+            <button
+              v-for="m in durationOptions"
+              :key="m"
+              type="button"
+              class="hub-pill"
+              :class="{ active: focusHubStore.pomodoro.focusMinutes === m }"
+              :disabled="focusHubStore.pomodoro.isRunning"
+              @click="focusHubStore.setFocusMinutes(m)"
+            >
+              {{ m }}m
+            </button>
+          </div>
+
+          <div v-if="focusHubStore.pomodoro.mode !== 'break'" class="hub-difficulty-row">
+            <button
+              type="button"
+              class="hub-diff-btn"
+              :class="{ active: focusHubStore.pomodoro.taskDifficulty === 'L1' }"
+              :disabled="focusHubStore.pomodoro.isRunning"
+              @click="focusHubStore.setTaskDifficulty('L1')"
+            >
+              L1 日常
+            </button>
+            <button
+              type="button"
+              class="hub-diff-btn"
+              :class="{ active: focusHubStore.pomodoro.taskDifficulty === 'L2' }"
+              :disabled="focusHubStore.pomodoro.isRunning"
+              @click="focusHubStore.setTaskDifficulty('L2')"
+            >
+              L2 硬核
+            </button>
+          </div>
+
+          <div v-if="focusHubStore.pomodoro.linkedTaskTitle" class="linked-task-chip">
+            <span>关联任务</span>
+            <strong>{{ focusHubStore.pomodoro.linkedTaskTitle }}</strong>
+          </div>
+
           <div class="timer-stage">
             <svg class="progress-ring" viewBox="0 0 240 240" aria-hidden="true">
               <defs>
-                <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <linearGradient v-if="focusHubStore.pomodoro.mode !== 'break'" id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stop-color="#5ce3ff" />
                   <stop offset="100%" stop-color="#63ffad" />
+                </linearGradient>
+                <linearGradient v-else id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#ffb757" />
+                  <stop offset="100%" stop-color="#ff7147" />
                 </linearGradient>
               </defs>
               <circle class="ring-base" cx="120" cy="120" r="92" />
@@ -306,7 +390,7 @@ onUnmounted(() => {
             </div>
             <div class="stat-chip">
               <span>当前节奏</span>
-              <strong>25 / 5</strong>
+              <strong>{{ focusHubStore.pomodoro.focusMinutes }} / {{ focusHubStore.pomodoro.breakMinutes }}</strong>
             </div>
           </div>
 
@@ -336,6 +420,38 @@ onUnmounted(() => {
             </button>
           </div>
         </section>
+
+        <!-- Hub settlement modal -->
+        <div v-if="showHubSettlement" class="hub-settle-overlay">
+          <div class="hub-settle-card">
+            <h3>专注完成</h3>
+            <p>本轮 {{ focusHubStore.pomodoro.focusMinutes }} 分钟 · 难度 {{ focusHubStore.pomodoro.taskDifficulty }}</p>
+            <textarea
+              v-model="hubSessionLog"
+              class="hub-settle-input"
+              placeholder="写一句日志记录本轮做了什么（可留空）"
+              :disabled="isHubSettling"
+            />
+            <div class="hub-settle-actions">
+              <button
+                type="button"
+                class="hub-btn primary large"
+                :disabled="isHubSettling"
+                @click="submitHubSettlement"
+              >
+                {{ isHubSettling ? '结算中...' : '提交结算' }}
+              </button>
+              <button
+                type="button"
+                class="hub-btn ghost large"
+                :disabled="isHubSettling"
+                @click="skipHubSettlement"
+              >
+                跳过
+              </button>
+            </div>
+          </div>
+        </div>
 
         <section class="tasks-panel card glass animate-slide-up">
           <div class="panel-head">
@@ -1115,6 +1231,140 @@ onUnmounted(() => {
 .icon-btn.danger {
   color: #ff9b9b;
   border-color: rgba(255, 113, 113, 0.2);
+}
+
+.hub-duration-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.hub-pill {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #dbeeff;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  transition: background 180ms ease, color 180ms ease;
+}
+
+.hub-pill.active {
+  background: linear-gradient(135deg, rgba(95, 231, 255, 0.28), rgba(99, 255, 173, 0.18));
+  border: 1px solid rgba(95, 231, 255, 0.24);
+  color: #fff;
+}
+
+.hub-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hub-difficulty-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.hub-diff-btn {
+  flex: 1;
+  border: 1px solid rgba(95, 231, 255, 0.16);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #dbeeff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  transition: background 180ms ease, border-color 180ms ease;
+}
+
+.hub-diff-btn.active {
+  border-color: rgba(95, 231, 255, 0.42);
+  background: linear-gradient(135deg, rgba(54, 192, 255, 0.22), rgba(53, 122, 255, 0.16));
+}
+
+.hub-diff-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.linked-task-chip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(99, 255, 173, 0.08);
+  border: 1px solid rgba(99, 255, 173, 0.18);
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.linked-task-chip span {
+  color: rgba(219, 238, 255, 0.55);
+}
+
+.linked-task-chip strong {
+  color: #63ffad;
+}
+
+.hub-settle-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(2, 6, 18, 0.72);
+  backdrop-filter: blur(14px);
+}
+
+.hub-settle-card {
+  width: min(440px, calc(100vw - 24px));
+  border-radius: 24px;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(16, 34, 74, 0.96), rgba(8, 16, 36, 0.98)),
+    rgba(11, 18, 32, 0.92);
+  border: 1.5px solid rgba(95, 231, 255, 0.28);
+  color: #eef7ff;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hub-settle-card h3 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.hub-settle-card p {
+  margin: 0;
+  color: rgba(219, 238, 255, 0.68);
+}
+
+.hub-settle-input {
+  min-height: 100px;
+  border: 1px solid rgba(95, 231, 255, 0.18);
+  border-radius: 16px;
+  background: rgba(7, 14, 32, 0.82);
+  color: #eef7ff;
+  padding: 12px 14px;
+  resize: vertical;
+  outline: none;
+  font: inherit;
+  line-height: 1.6;
+}
+
+.hub-settle-actions {
+  display: flex;
+  gap: 10px;
 }
 
 @media (min-width: 1040px) {

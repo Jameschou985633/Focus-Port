@@ -1,8 +1,10 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
-import { previewSequencePlan } from '../api/qwenService'
+import { useGoalDecomposer } from '../composables/useGoalDecomposer'
+import { StalePlanningRequestError } from '../composables/useAIPlanning'
 
 const STORAGE_PREFIX = 'fc'
+const DEFAULT_STYLE = 'balanced'
 
 const currentUsername = () => {
   if (typeof window === 'undefined') return 'guest'
@@ -31,6 +33,17 @@ const safeParseArray = (raw) => {
   }
 }
 
+const safeParseObject = (raw, fallback = {}) => {
+  if (!raw) return fallback
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : fallback
+  } catch (error) {
+    console.warn(`Failed to parse object storage: ${raw}`, error)
+    return fallback
+  }
+}
+
 const generateId = (prefix = 'seq') => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}-${crypto.randomUUID()}`
@@ -44,36 +57,99 @@ const clampMinutes = (value) => {
   return Math.min(180, Math.max(5, Math.round(numeric)))
 }
 
+const clampPomodoros = (value) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 1
+  return Math.min(3, Math.max(1, Math.round(numeric)))
+}
+
 const normalizePriority = (value, fallback = 1) => {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return fallback
   return Math.max(1, Math.round(numeric))
 }
 
-const normalizeDraftItem = (item = {}, index = 0) => ({
-  id: String(item.id || generateId('draft')),
-  task: String(item.task || '').trim(),
-  minutes: clampMinutes(item.minutes),
-  priority: normalizePriority(item.priority, index + 1),
-  source: item.source || 'ai'
-})
+const normalizeStyle = (value) => {
+  if (value === 'conservative' || value === 'sprint') return value
+  return 'balanced'
+}
 
-const normalizeTimelineTask = (item = {}, index = 0) => ({
-  id: String(item.id || generateId('task')),
-  task: String(item.task || '').trim(),
-  minutes: clampMinutes(item.minutes),
-  priority: normalizePriority(item.priority, index + 1),
-  source: item.source || 'ai',
-  status: ['pending', 'deployed', 'completed'].includes(item.status) ? item.status : 'pending',
-  createdAt: item.createdAt || new Date().toISOString(),
-  deployedAt: item.deployedAt || '',
-  completedAt: item.completedAt || ''
-})
+const normalizeDraftItem = (item = {}, index = 0) => {
+  const title = String(item.title || item.task || '').trim()
+  const estimatedPomodoros = clampPomodoros(item.estimatedPomodoros ?? Math.max(1, Math.round(clampMinutes(item.minutes) / 25)))
+  return {
+    id: String(item.id || generateId('draft')),
+    title,
+    task: title,
+    description: String(item.description || '').trim(),
+    doneDefinition: String(item.doneDefinition || '').trim(),
+    estimatedPomodoros,
+    minutes: clampMinutes(item.minutes ?? estimatedPomodoros * 25),
+    priority: normalizePriority(item.priority, index + 1),
+    difficulty: ['low', 'medium', 'high'].includes(item.difficulty) ? item.difficulty : 'medium',
+    category: item.category ? String(item.category) : '',
+    reason: item.reason ? String(item.reason) : '',
+    actionable: item.actionable !== false,
+    source: item.source || 'ai_generated'
+  }
+}
+
+const normalizeTimelineTask = (item = {}, index = 0) => {
+  const title = String(item.title || item.task || '').trim()
+  const estimatedPomodoros = clampPomodoros(item.estimatedPomodoros ?? Math.max(1, Math.round(clampMinutes(item.minutes) / 25)))
+  return {
+    id: String(item.id || generateId('task')),
+    title,
+    task: title,
+    description: String(item.description || '').trim(),
+    doneDefinition: String(item.doneDefinition || '').trim(),
+    estimatedPomodoros,
+    minutes: clampMinutes(item.minutes ?? estimatedPomodoros * 25),
+    priority: normalizePriority(item.priority, index + 1),
+    difficulty: ['low', 'medium', 'high'].includes(item.difficulty) ? item.difficulty : 'medium',
+    category: item.category ? String(item.category) : '',
+    reason: item.reason ? String(item.reason) : '',
+    actionable: item.actionable !== false,
+    source: item.source || 'ai_generated',
+    status: ['pending', 'deployed', 'completed'].includes(item.status) ? item.status : 'pending',
+    createdAt: item.createdAt || new Date().toISOString(),
+    deployedAt: item.deployedAt || '',
+    completedAt: item.completedAt || ''
+  }
+}
+
+const normalizeDraftPriorities = (items) => {
+  return items.map((item, index) => normalizeDraftItem({ ...item, priority: index + 1 }, index))
+}
+
+const normalizeDraftStepToTimelineItem = (step, createdAt = new Date().toISOString()) => {
+  const normalized = normalizeDraftItem(step, 0)
+  return normalizeTimelineTask({
+    id: generateId('task'),
+    title: normalized.title,
+    task: normalized.title,
+    description: normalized.description,
+    doneDefinition: normalized.doneDefinition,
+    estimatedPomodoros: normalized.estimatedPomodoros,
+    minutes: normalized.estimatedPomodoros * 25,
+    priority: normalized.priority,
+    difficulty: normalized.difficulty,
+    category: normalized.category,
+    reason: normalized.reason,
+    actionable: normalized.actionable,
+    source: normalized.source || 'ai_generated',
+    status: 'pending',
+    createdAt
+  })
+}
 
 export const useMasterTimelineStore = defineStore('masterTimeline', () => {
+  const { decomposeGoal } = useGoalDecomposer()
+
   const hydratedUsername = ref('')
   const hydratedDate = ref(todayKey())
   const previewGoal = ref('')
+  const decomposeStyle = ref(DEFAULT_STYLE)
   const preflightDraft = ref([])
   const masterTimeline = ref([])
   const timelineOrder = ref([])
@@ -86,17 +162,18 @@ export const useMasterTimelineStore = defineStore('masterTimeline', () => {
     window.localStorage.setItem(scopedKey(scope, username, dateKey), JSON.stringify(payload))
   }
 
-  const persistGoal = (username = hydratedUsername.value || currentUsername(), dateKey = hydratedDate.value || todayKey()) => {
+  const persistMeta = (username = hydratedUsername.value || currentUsername(), dateKey = hydratedDate.value || todayKey()) => {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(scopedKey('sequenceGoal', username, dateKey), previewGoal.value)
+    window.localStorage.setItem(scopedKey('sequenceMeta', username, dateKey), JSON.stringify({
+      decomposeStyle: decomposeStyle.value
+    }))
   }
 
   const rehydrateOrder = () => {
-    const orderSet = new Set(timelineOrder.value)
     const ordered = timelineOrder.value.filter((id) => masterTimeline.value.some((task) => task.id === id))
-    const missing = masterTimeline.value
-      .map((task) => task.id)
-      .filter((id) => !orderSet.has(id))
+    const orderedSet = new Set(ordered)
+    const missing = masterTimeline.value.map((task) => task.id).filter((id) => !orderedSet.has(id))
     timelineOrder.value = [...ordered, ...missing]
   }
 
@@ -105,6 +182,7 @@ export const useMasterTimelineStore = defineStore('masterTimeline', () => {
     const dateKey = todayKey()
     hydratedUsername.value = username
     hydratedDate.value = dateKey
+
     preflightDraft.value = safeParseArray(window.localStorage.getItem(scopedKey('sequenceDraft', username, dateKey)))
       .map((item, index) => normalizeDraftItem(item, index))
     masterTimeline.value = safeParseArray(window.localStorage.getItem(scopedKey('masterTimeline', username, dateKey)))
@@ -112,6 +190,10 @@ export const useMasterTimelineStore = defineStore('masterTimeline', () => {
     timelineOrder.value = safeParseArray(window.localStorage.getItem(scopedKey('timelineOrder', username, dateKey)))
       .map((id) => String(id))
     previewGoal.value = window.localStorage.getItem(scopedKey('sequenceGoal', username, dateKey)) || ''
+    const meta = safeParseObject(window.localStorage.getItem(scopedKey('sequenceMeta', username, dateKey)), {})
+    decomposeStyle.value = normalizeStyle(meta.decomposeStyle)
+
+    preflightDraft.value = normalizeDraftPriorities(preflightDraft.value)
     rehydrateOrder()
     activeTaskId.value = masterTimeline.value.find((task) => task.status === 'deployed')?.id || ''
   }
@@ -131,9 +213,9 @@ export const useMasterTimelineStore = defineStore('masterTimeline', () => {
     persistArray('timelineOrder', nextValue, hydratedUsername.value, hydratedDate.value)
   }, { deep: true })
 
-  watch(previewGoal, () => {
+  watch([previewGoal, decomposeStyle], () => {
     if (!hydratedUsername.value) return
-    persistGoal(hydratedUsername.value, hydratedDate.value)
+    persistMeta(hydratedUsername.value, hydratedDate.value)
   })
 
   const orderedTimeline = computed(() => {
@@ -156,29 +238,54 @@ export const useMasterTimelineStore = defineStore('masterTimeline', () => {
     return Math.round((completedTasks.value.length / total) * 100)
   })
 
-  const requestAIPreview = async (goal) => {
+  const applyAIDraftSteps = (steps, mode = 'replace') => {
+    const normalized = (Array.isArray(steps) ? steps : [])
+      .map((step, index) => normalizeDraftItem({
+        ...step,
+        source: step?.source || 'ai_generated',
+        priority: step?.priority || index + 1
+      }, index))
+      .filter((item) => item.title)
+
+    if (mode === 'append') {
+      preflightDraft.value = normalizeDraftPriorities([...preflightDraft.value, ...normalized])
+      return preflightDraft.value
+    }
+
+    preflightDraft.value = normalizeDraftPriorities(normalized)
+    return preflightDraft.value
+  }
+
+  const requestAIPreview = async (goal, options = {}) => {
     const normalizedGoal = String(goal || '').trim()
     previewGoal.value = normalizedGoal
     generationError.value = ''
+
     if (!normalizedGoal) {
       preflightDraft.value = []
-      generationError.value = '请输入需要拆解的目标。'
+      generationError.value = '请输入需要拆解的任务目标。'
       return []
     }
 
     isGenerating.value = true
     try {
-      const response = await previewSequencePlan({ goal: normalizedGoal })
-      const plan = Array.isArray(response?.plan) ? response.plan : []
-      const normalized = plan.map((item, index) => normalizeDraftItem(item, index)).filter((item) => item.task)
-      preflightDraft.value = normalized
-      if (!normalized.length) {
-        generationError.value = 'AI 没有给出可部署的步序，请重试或手动补充。'
+      const steps = await decomposeGoal({
+        goal: normalizedGoal,
+        style: normalizeStyle(options.style || decomposeStyle.value),
+        availableMinutes: options.availableMinutes,
+        weakPoints: options.weakPoints
+      })
+      const applied = applyAIDraftSteps(steps, options.mode || 'replace')
+      if (!applied.length) {
+        generationError.value = '暂未生成可执行步骤，请调整目标后重试。'
       }
-      return normalized
+      return applied
     } catch (error) {
-      console.error('Failed to preview sequence plan', error)
-      generationError.value = '逻辑预演失败，请稍后重试。'
+      if (error instanceof StalePlanningRequestError || error?.name === 'StalePlanningRequestError') {
+        return preflightDraft.value
+      }
+      console.error('Failed to generate sequence draft', error)
+      generationError.value = 'AI 拆解失败，请稍后重试。'
       preflightDraft.value = []
       return []
     } finally {
@@ -187,47 +294,51 @@ export const useMasterTimelineStore = defineStore('masterTimeline', () => {
   }
 
   const updateDraftItem = (id, patch) => {
-    preflightDraft.value = preflightDraft.value.map((item, index) => {
-      if (item.id !== id) return item
-      const next = { ...item, ...patch }
-      return normalizeDraftItem(next, index)
-    })
+    preflightDraft.value = normalizeDraftPriorities(
+      preflightDraft.value.map((item, index) => {
+        if (item.id !== id) return normalizeDraftItem(item, index)
+        return normalizeDraftItem({ ...item, ...patch }, index)
+      })
+    )
   }
 
   const addDraftItem = () => {
-    preflightDraft.value = [
+    preflightDraft.value = normalizeDraftPriorities([
       ...preflightDraft.value,
       normalizeDraftItem(
         {
           id: generateId('draft'),
-          task: '',
-          minutes: 25,
+          title: '',
+          estimatedPomodoros: 1,
           priority: preflightDraft.value.length + 1,
+          difficulty: 'medium',
+          actionable: true,
           source: 'manual'
         },
         preflightDraft.value.length
       )
-    ]
+    ])
   }
 
   const removeDraftItem = (id) => {
-    preflightDraft.value = preflightDraft.value
-      .filter((item) => item.id !== id)
-      .map((item, index) => normalizeDraftItem({ ...item, priority: index + 1 }, index))
+    preflightDraft.value = normalizeDraftPriorities(preflightDraft.value.filter((item) => item.id !== id))
+  }
+
+  const moveDraftItem = (id, direction) => {
+    const index = preflightDraft.value.findIndex((item) => item.id === id)
+    if (index < 0) return
+    const targetIndex = direction === 'up' ? index - 1 : index + 1
+    if (targetIndex < 0 || targetIndex >= preflightDraft.value.length) return
+    const next = [...preflightDraft.value]
+    const [moved] = next.splice(index, 1)
+    next.splice(targetIndex, 0, moved)
+    preflightDraft.value = normalizeDraftPriorities(next)
   }
 
   const confirmDraftToTimeline = () => {
     const createdAt = new Date().toISOString()
     const incoming = preflightDraft.value
-      .map((item, index) => normalizeTimelineTask({
-        id: generateId('task'),
-        task: item.task,
-        minutes: item.minutes,
-        priority: item.priority || index + 1,
-        source: item.source || 'ai',
-        status: 'pending',
-        createdAt
-      }, index))
+      .map((item) => normalizeDraftStepToTimelineItem(item, createdAt))
       .filter((item) => item.task)
 
     if (!incoming.length) return []
@@ -303,10 +414,12 @@ export const useMasterTimelineStore = defineStore('masterTimeline', () => {
     timelineOrder.value = []
     previewGoal.value = ''
     activeTaskId.value = ''
+    decomposeStyle.value = DEFAULT_STYLE
   }
 
   return {
     previewGoal,
+    decomposeStyle,
     preflightDraft,
     masterTimeline,
     timelineOrder,
@@ -320,10 +433,13 @@ export const useMasterTimelineStore = defineStore('masterTimeline', () => {
     generationError,
     hydrateToday,
     requestAIPreview,
+    applyAIDraftSteps,
     updateDraftItem,
     addDraftItem,
     removeDraftItem,
+    moveDraftItem,
     confirmDraftToTimeline,
+    normalizeDraftStepToTimelineItem,
     reorderTimeline,
     sortTimelineByPriority,
     deployTask,

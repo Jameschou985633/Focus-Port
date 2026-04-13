@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { authApi } from '../api'
 import { useUserStore } from '../stores/user'
+import LoginTransitionOverlay from './LoginTransitionOverlay.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -13,6 +14,7 @@ const password = ref('')
 const confirmPassword = ref('')
 const isLoading = ref(false)
 const errorMsg = ref('')
+const showLoginTransition = ref(false)
 
 const handleSubmit = async () => {
   errorMsg.value = ''
@@ -36,7 +38,7 @@ const handleSubmit = async () => {
         userStore.username = username.value.trim()
         localStorage.setItem('username', username.value.trim())
         await userStore.loadGrowth()
-        router.push('/')
+        showLoginTransition.value = true
       }
     } else {
       const res = await authApi.register(username.value.trim(), password.value)
@@ -50,6 +52,10 @@ const handleSubmit = async () => {
   } finally {
     isLoading.value = false
   }
+}
+
+const onLoginAnimationDone = () => {
+  router.push('/')
 }
 
 const switchMode = () => {
@@ -136,6 +142,8 @@ const switchMode = () => {
       </div>
     </div>
   </div>
+
+  <LoginTransitionOverlay :visible="showLoginTransition" @done="onLoginAnimationDone" />
 </template>
 
 <style scoped>

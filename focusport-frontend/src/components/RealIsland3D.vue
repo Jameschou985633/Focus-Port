@@ -19,6 +19,7 @@ import { focusApi, unifiedShopApi } from '../api'
 import { useDimensionStore } from '../stores/dimension'
 import { useInventoryStore } from '../stores/inventory'
 import { useMasterTimelineStore } from '../stores/masterTimeline'
+import { useFocusHubStore } from '../stores/focusHub'
 import '../assets/kenney-ui/kenney-hud.css'
 
 const props = defineProps({
@@ -32,6 +33,7 @@ const router = useRouter()
 const dimensionStore = useDimensionStore()
 const inventoryStore = useInventoryStore()
 const masterTimelineStore = useMasterTimelineStore()
+const focusHubStore = useFocusHubStore()
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const currentUsername = ref(localStorage.getItem('username') || 'guest')
 
@@ -45,7 +47,6 @@ const hoveredPlacementSlotId = ref('')
 const supportsHover = ref(false)
 
 const showAiWindow = ref(false)
-const currentFocusTask = ref(null)
 
 const userGrowth = ref({
   exp: 0,
@@ -57,10 +58,6 @@ const userGrowth = ref({
 })
 
 const durationOptions = [15, 25, 30, 45, 60]
-const selectedDuration = ref(25)
-const taskDifficulty = ref('L1')
-const remainingSeconds = ref(selectedDuration.value * 60)
-const isRunning = ref(false)
 const showFocusDebrief = ref(false)
 const focusSessionLog = ref('')
 const isFocusSettlementSubmitting = ref(false)
@@ -68,7 +65,6 @@ const pendingFocusDuration = ref(0)
 const focusSettlementResult = ref(null)
 const showFocusRewardModal = ref(false)
 const terminalFeed = ref(null)
-let timer = null
 let focusRewardTimer = null
 
 const CITY_THEME = {
@@ -84,19 +80,20 @@ const CITY_THEME = {
 const SAFE_CITY_Y = 1.7
 
 const formattedTime = computed(() => {
-  const mins = Math.floor(remainingSeconds.value / 60)
-  const secs = remainingSeconds.value % 60
+  const total = Math.max(0, focusHubStore.pomodoro.remainingSeconds)
+  const mins = Math.floor(total / 60)
+  const secs = total % 60
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
 })
 
 const focusProgress = computed(() => {
-  const total = selectedDuration.value * 60
-  return total > 0 ? 1 - remainingSeconds.value / total : 0
+  const total = focusHubStore.pomodoro.focusMinutes * 60
+  return total > 0 ? 1 - focusHubStore.pomodoro.remainingSeconds / total : 0
 })
 
 const focusMinutes = computed(() => userGrowth.value.total_focus_minutes || 0)
 const selectedDifficultyMeta = computed(() => (
-  taskDifficulty.value === 'L2'
+  focusHubStore.pomodoro.taskDifficulty === 'L2'
     ? {
         label: 'High / L2',
         multiplier: '1.5x',
@@ -209,14 +206,11 @@ const loadUserGrowth = async () => {
 }
 
 const changeDuration = (minutes) => {
-  if (isRunning.value) return
-  selectedDuration.value = minutes
-  remainingSeconds.value = minutes * 60
+  focusHubStore.setFocusMinutes(minutes)
 }
 
 const changeDifficulty = (value) => {
-  if (isRunning.value) return
-  taskDifficulty.value = value === 'L2' ? 'L2' : 'L1'
+  focusHubStore.setTaskDifficulty(value)
 }
 
 const pushTerminalFeed = ({ status = 'resolved', content = '', severity = 'success', channel = 'system' }) => {
@@ -246,7 +240,7 @@ const scheduleRewardReveal = (feedback = '') => {
 }
 
 const startFocusSettlement = () => {
-  pendingFocusDuration.value = selectedDuration.value
+  pendingFocusDuration.value = focusHubStore.pomodoro.focusMinutes
   focusSessionLog.value = ''
   focusSettlementResult.value = null
   showFocusRewardModal.value = false
@@ -259,7 +253,7 @@ const closeFocusRewardModal = () => {
 
 const submitFocusComplete = async () => {
   if (isFocusSettlementSubmitting.value) return
-  const duration = pendingFocusDuration.value || selectedDuration.value
+  const duration = pendingFocusDuration.value || focusHubStore.pomodoro.focusMinutes
   isFocusSettlementSubmitting.value = true
   showAiWindow.value = true
   pushTerminalFeed({
@@ -269,32 +263,29 @@ const submitFocusComplete = async () => {
     channel: 'system'
   })
   try {
-    const response = await focusApi.complete(
-      currentUsername.value,
+    const data = await focusHubStore.completeFocusSession({
+      username: currentUsername.value,
       duration,
-      '物理实体舱番茄钟',
-      focusSessionLog.value,
-      taskDifficulty.value
-    )
+      subject: '物理实体舱番茄钟',
+      sessionLog: focusSessionLog.value,
+      taskDifficulty: focusHubStore.pomodoro.taskDifficulty
+    })
     focusSettlementResult.value = {
-      ...(response.data || {}),
+      ...(data || {}),
       duration,
-      taskDifficulty: taskDifficulty.value,
+      taskDifficulty: focusHubStore.pomodoro.taskDifficulty,
       sessionLog: focusSessionLog.value.trim()
     }
     showFocusDebrief.value = false
     pushTerminalFeed({
       status: 'resolved',
-      content: response.data?.feedback || '评估完成，本轮收益已结算。',
-      severity: response.data?.evaluation_source === 'fallback' ? 'warning' : 'success',
+      content: data?.feedback || '评估完成，本轮收益已结算。',
+      severity: data?.evaluation_source === 'fallback' ? 'warning' : 'success',
       channel: 'system'
     })
     await loadUserGrowth()
-    if (currentFocusTask.value?.id) {
-      masterTimelineStore.completeTask(currentFocusTask.value.id)
-    }
-    currentFocusTask.value = null
-    scheduleRewardReveal(response.data?.feedback || '')
+    focusHubStore.resolveFocusCompletion()
+    scheduleRewardReveal(data?.feedback || '')
   } catch (error) {
     console.error('Failed to sync focus completion', error)
     pushTerminalFeed({
@@ -310,33 +301,19 @@ const submitFocusComplete = async () => {
 }
 
 const startFocus = () => {
-  if (isRunning.value || showFocusDebrief.value || isFocusSettlementSubmitting.value) return
-  if (!currentFocusTask.value && activeTimelineTask.value) {
-    currentFocusTask.value = activeTimelineTask.value
+  if (focusHubStore.pomodoro.isRunning || showFocusDebrief.value || isFocusSettlementSubmitting.value) return
+  if (!focusHubStore.pomodoro.linkedTaskId && activeTimelineTask.value) {
+    focusHubStore.linkTimelineTask(activeTimelineTask.value)
   }
-  isRunning.value = true
-  timer = setInterval(async () => {
-    if (remainingSeconds.value > 0) {
-      remainingSeconds.value -= 1
-      return
-    }
-
-    clearInterval(timer)
-    timer = null
-    isRunning.value = false
-    remainingSeconds.value = selectedDuration.value * 60
-    startFocusSettlement()
-  }, 1000)
+  focusHubStore.startPomodoro()
 }
 
 const startTimelineTask = (task) => {
   if (!task) return
-  currentFocusTask.value = task
-  selectedDuration.value = Number(task.minutes || 25)
-  remainingSeconds.value = selectedDuration.value * 60
+  focusHubStore.linkTimelineTask(task)
   masterTimelineStore.deployTask(task.id)
   showAiWindow.value = false
-  startFocus()
+  focusHubStore.startPomodoro()
 }
 
 const handleNavSelection = (id) => {
@@ -346,10 +323,6 @@ const handleNavSelection = (id) => {
   }
   if (id === 'exchange') {
     router.push('/shop')
-    return
-  }
-  if (id === 'vault') {
-    window.dispatchEvent(new CustomEvent('blueprint-vault-open'))
     return
   }
   if (id === 'fleet') {
@@ -570,9 +543,16 @@ const handleKeydown = (event) => {
   }
 }
 
+watch(() => focusHubStore.pomodoro.pendingSettlement, (pending) => {
+  if (pending && focusHubStore.pomodoro.mode === 'focus') {
+    startFocusSettlement()
+  }
+})
+
 onMounted(async () => {
   supportsHover.value = window.matchMedia('(hover: hover) and (pointer: fine)').matches
   masterTimelineStore.hydrateToday(currentUsername.value)
+  focusHubStore.hydrate(currentUsername.value)
   const bootstrapTasks = props.previewMode
     ? [loadCitySlots(), loadPlacedDecorations()]
     : [loadCitySlots(), loadPlacedDecorations(), loadUserGrowth()]
@@ -584,7 +564,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
   clearRewardTimer()
   if (!props.previewMode) {
     window.removeEventListener('keydown', handleKeydown)
@@ -745,13 +724,15 @@ onUnmounted(() => {
     <LeftSidebar
       v-if="!props.previewMode"
       :formatted-time="formattedTime"
-      :is-running="isRunning"
+      :is-running="focusHubStore.pomodoro.isRunning"
       :focus-progress="focusProgress"
       :duration-options="durationOptions"
-      :selected-duration="selectedDuration"
-      :selected-difficulty="taskDifficulty"
+      :selected-duration="focusHubStore.pomodoro.focusMinutes"
+      :selected-difficulty="focusHubStore.pomodoro.taskDifficulty"
       :focus-energy="userGrowth.focus_energy || 0"
       :user-growth="userGrowth"
+      :mode="focusHubStore.pomodoro.mode"
+      :completed-sessions="focusHubStore.pomodoro.completedFocusSessions"
       @start-focus="startFocus"
       @change-duration="changeDuration"
       @change-difficulty="changeDifficulty"
@@ -776,7 +757,7 @@ onUnmounted(() => {
         <span class="focus-modal-kicker">Focus Debrief</span>
         <h3>专注结束，提交一句算力日志</h3>
         <p class="focus-modal-copy">
-          本轮时长 {{ pendingFocusDuration || selectedDuration }} 分钟，当前脑力负载为
+          本轮时长 {{ pendingFocusDuration || focusHubStore.pomodoro.focusMinutes }} 分钟，当前脑力负载为
           <strong>{{ selectedDifficultyMeta.label }}</strong>
           <span class="focus-modal-multiplier">收益基准 {{ selectedDifficultyMeta.multiplier }}</span>
         </p>

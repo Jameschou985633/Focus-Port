@@ -9,7 +9,7 @@ const router = useRouter()
 const dimensionStore = useDimensionStore()
 const inventoryStore = useInventoryStore()
 
-const isOpen = ref(true)
+const isOpen = ref(false)
 
 const groupedInventory = computed(() => ([
   {
@@ -140,10 +140,10 @@ onUnmounted(() => {
 <style scoped>
 .backpack-shell {
   position: fixed;
-  right: 18px;
+  left: 22px;
   bottom: 20px;
   z-index: 32;
-  width: min(360px, calc(100vw - 28px));
+  width: min(340px, calc(100vw - 44px));
 }
 
 .backpack-toggle,
@@ -355,6 +355,7 @@ onUnmounted(() => {
     right: 12px;
     bottom: 88px;
     width: auto;
+    max-width: calc(100vw - 24px);
   }
 }
 </style>

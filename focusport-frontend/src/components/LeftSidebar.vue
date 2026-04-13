@@ -20,7 +20,9 @@ const props = defineProps({
       streak_days: 0,
       total_focus_minutes: 0
     })
-  }
+  },
+  mode: { type: String, default: 'focus' },
+  completedSessions: { type: Number, default: 0 }
 })
 
 const emit = defineEmits([
@@ -29,7 +31,12 @@ const emit = defineEmits([
   'change-difficulty'
 ])
 
+const isBreak = computed(() => props.mode === 'break')
 const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 100)}%`)
+
+const ringRadius = 44
+const ringCircumference = 2 * Math.PI * ringRadius
+const ringOffset = computed(() => ringCircumference * (1 - Math.max(0, Math.min(1, props.focusProgress))))
 </script>
 
 <template>
@@ -43,7 +50,8 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
         <span class="card-badge">{{ WORLD_NAMES.currency.zh }} {{ focusEnergy }}</span>
       </header>
 
-      <div class="duration-pills">
+      <!-- Duration pills (hidden during break) -->
+      <div v-if="!isBreak" class="duration-pills">
         <button
           v-for="minutes in durationOptions"
           :key="minutes"
@@ -53,66 +61,100 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
           :disabled="isRunning"
           @click="emit('change-duration', minutes)"
         >
-          {{ minutes }}m
+          {{ minutes }}
         </button>
       </div>
 
-      <div class="time-display">{{ formattedTime }}</div>
-
-      <div class="difficulty-panel">
-        <div class="difficulty-header">
-          <span>脑力负载</span>
-          <strong>{{ selectedDifficulty === 'L2' ? 'High / L2' : 'Low / L1' }}</strong>
+      <!-- Timer ring -->
+      <div class="timer-row">
+        <div class="ring-wrap">
+          <svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+            <defs>
+              <linearGradient v-if="!isBreak" id="sbGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#5ce3ff" />
+                <stop offset="100%" stop-color="#63ffad" />
+              </linearGradient>
+              <linearGradient v-else id="sbGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#ffb757" />
+                <stop offset="100%" stop-color="#ff7147" />
+              </linearGradient>
+            </defs>
+            <circle class="ring-base" cx="60" cy="60" :r="ringRadius" />
+            <circle
+              class="ring-progress"
+              cx="60"
+              cy="60"
+              :r="ringRadius"
+              :stroke-dasharray="ringCircumference"
+              :stroke-dashoffset="ringOffset"
+            />
+          </svg>
+          <div class="ring-inner">
+            <span class="ring-pct">{{ progressLabel }}</span>
+          </div>
         </div>
-        <div class="difficulty-options">
-          <button
-            type="button"
-            class="difficulty-btn"
-            :class="{ active: selectedDifficulty === 'L1' }"
-            :disabled="isRunning"
-            @click="emit('change-difficulty', 'L1')"
-          >
-            <span>Low (L1)</span>
-            <small>日常阅读 / 整理笔记</small>
-          </button>
-          <button
-            type="button"
-            class="difficulty-btn"
-            :class="{ active: selectedDifficulty === 'L2' }"
-            :disabled="isRunning"
-            @click="emit('change-difficulty', 'L2')"
-          >
-            <span>High (L2)</span>
-            <small>刷题 / 写代码 / 深度复盘</small>
-          </button>
+        <div class="timer-info">
+          <strong class="timer-value">{{ formattedTime }}</strong>
+          <span class="timer-mode">{{ isBreak ? '休息恢复' : '专注推进' }}</span>
+          <span v-if="completedSessions > 0" class="timer-sessions">今日 {{ completedSessions }} 轮</span>
         </div>
       </div>
 
-      <div class="progress-track">
-        <div class="progress-fill" :style="{ width: `${Math.max(0, Math.min(1, focusProgress)) * 100}%` }"></div>
-      </div>
-      <div class="status-line">
-        <span>当前脉冲推进</span>
-        <strong>{{ progressLabel }}</strong>
+      <!-- Difficulty (hidden during break) -->
+      <div v-if="!isBreak" class="diff-row">
+        <button
+          type="button"
+          class="diff-btn"
+          :class="{ active: selectedDifficulty === 'L1' }"
+          :disabled="isRunning"
+          @click="emit('change-difficulty', 'L1')"
+        >
+          L1 日常
+        </button>
+        <button
+          type="button"
+          class="diff-btn"
+          :class="{ active: selectedDifficulty === 'L2' }"
+          :disabled="isRunning"
+          @click="emit('change-difficulty', 'L2')"
+        >
+          L2 硬核
+        </button>
       </div>
 
-      <div class="growth-grid">
+      <!-- Growth stats -->
+      <div class="growth-row">
         <div class="growth-item">
-          <span class="label">等级</span>
-          <strong>Lv.{{ userGrowth.level || 1 }}</strong>
+          <span class="label">Lv</span>
+          <strong>{{ userGrowth.level || 1 }}</strong>
         </div>
         <div class="growth-item">
-          <span class="label">连续体</span>
-          <strong>{{ userGrowth.streak_days || 0 }} 天</strong>
+          <span class="label">连续</span>
+          <strong>{{ userGrowth.streak_days || 0 }}d</strong>
         </div>
         <div class="growth-item">
-          <span class="label">自律值</span>
+          <span class="label">自律</span>
           <strong>{{ userGrowth.discipline_score || 0 }}</strong>
         </div>
       </div>
 
-      <button type="button" class="launch-btn" :disabled="isRunning" @click="emit('start-focus')">
+      <!-- Launch -->
+      <button
+        v-if="!isBreak"
+        type="button"
+        class="launch-btn"
+        :disabled="isRunning"
+        @click="emit('start-focus')"
+      >
         {{ isRunning ? '脉冲点火中...' : '启动脉冲点火' }}
+      </button>
+      <button
+        v-else
+        type="button"
+        class="launch-btn break-btn"
+        disabled
+      >
+        休息恢复中...
       </button>
     </section>
 
@@ -125,7 +167,7 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
   position: absolute;
   top: 78px;
   left: 22px;
-  width: min(380px, calc(100vw - 44px));
+  width: min(340px, calc(100vw - 44px));
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -135,7 +177,7 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
 
 .sidebar-card {
   border-radius: 24px;
-  padding: 18px;
+  padding: 16px;
   background:
     linear-gradient(180deg, rgba(16, 34, 74, 0.95), rgba(8, 16, 36, 0.96)),
     rgba(11, 18, 32, 0.86);
@@ -151,12 +193,12 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .card-header h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
   text-shadow: 0 0 18px rgba(0, 255, 255, 0.16);
 }
 
@@ -170,27 +212,29 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
 
 .card-badge {
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   background: rgba(92, 193, 255, 0.12);
   border: 1px solid rgba(115, 224, 255, 0.24);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
+/* Duration pills */
 .duration-pills {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
 .pill {
   border: none;
   border-radius: 999px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: rgba(255, 255, 255, 0.08);
   color: #dbeeff;
   cursor: pointer;
   font-weight: 700;
+  font-size: 12px;
 }
 
 .pill.active {
@@ -203,121 +247,150 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
   cursor: not-allowed;
 }
 
-.time-display {
-  margin: 18px 0 10px;
-  font-size: 54px;
+/* Timer row: ring + info side by side */
+.timer-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.ring-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 100px;
+  height: 100px;
+}
+
+.ring-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  filter: drop-shadow(0 0 10px rgba(72, 183, 255, 0.18));
+}
+
+.ring-base,
+.ring-progress {
+  fill: none;
+  stroke-width: 7;
+}
+
+.ring-base {
+  stroke: rgba(255, 255, 255, 0.08);
+}
+
+.ring-progress {
+  stroke: url(#sbGrad);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 320ms linear;
+}
+
+.ring-inner {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.ring-pct {
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(219, 238, 255, 0.72);
+  font-family: var(--font-mono, 'Roboto Mono', monospace);
+}
+
+.timer-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.timer-value {
+  font-size: 38px;
   line-height: 1;
   font-weight: 900;
   letter-spacing: 0.04em;
+  font-family: var(--font-mono, 'Roboto Mono', monospace);
+  text-shadow: 0 0 18px rgba(95, 231, 255, 0.16);
 }
 
-.difficulty-panel {
-  margin: 0 0 14px;
-  border-radius: 18px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.045);
-  border: 1px solid rgba(115, 224, 255, 0.16);
+.timer-mode {
+  font-size: 12px;
+  color: rgba(219, 238, 255, 0.55);
+  letter-spacing: 0.08em;
 }
 
-.difficulty-header {
+.timer-sessions {
+  font-size: 11px;
+  color: #83e7ff;
+}
+
+/* Difficulty row */
+.diff-row {
   display: flex;
-  justify-content: space-between;
   gap: 8px;
   margin-bottom: 10px;
-  font-size: 12px;
-  color: rgba(222, 240, 255, 0.76);
 }
 
-.difficulty-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.difficulty-btn {
+.diff-btn {
+  flex: 1;
   border: 1px solid rgba(115, 224, 255, 0.18);
-  border-radius: 14px;
+  border-radius: 12px;
+  padding: 8px 10px;
   background: rgba(7, 16, 34, 0.8);
   color: #dbeeff;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
   cursor: pointer;
-  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
 }
 
-.difficulty-btn span {
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.difficulty-btn small {
-  color: rgba(222, 240, 255, 0.66);
-  line-height: 1.4;
-}
-
-.difficulty-btn.active {
+.diff-btn.active {
   border-color: rgba(115, 224, 255, 0.42);
   background: linear-gradient(180deg, rgba(49, 120, 255, 0.34), rgba(18, 35, 78, 0.94));
-  box-shadow: inset 0 0 0 1px rgba(129, 214, 255, 0.18);
 }
 
-.difficulty-btn:disabled {
+.diff-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
-.progress-track {
-  height: 14px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.progress-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #7c74ff, #48d5ff);
-}
-
-.status-line {
-  margin-top: 8px;
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: rgba(222, 240, 255, 0.76);
-}
-
-.growth-grid {
+/* Growth row */
+.growth-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin: 14px 0 16px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .growth-item {
-  border-radius: 16px;
-  padding: 10px;
+  border-radius: 12px;
+  padding: 8px;
   background: rgba(255, 255, 255, 0.05);
+  text-align: center;
 }
 
 .growth-item .label {
   display: block;
-  margin-bottom: 6px;
-  font-size: 12px;
-  color: rgba(222, 240, 255, 0.7);
+  margin-bottom: 4px;
+  font-size: 10px;
+  color: rgba(222, 240, 255, 0.6);
 }
 
+.growth-item strong {
+  font-size: 14px;
+}
+
+/* Launch button */
 .launch-btn {
   width: 100%;
-  min-height: 48px;
+  min-height: 44px;
   border: none;
-  border-radius: 16px;
+  border-radius: 14px;
   background: linear-gradient(180deg, #2fd8ff, #2d74ff);
   color: #fff;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -327,6 +400,10 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
   cursor: not-allowed;
 }
 
+.break-btn {
+  background: linear-gradient(180deg, #ffb757, #ff7147);
+}
+
 @media (max-width: 768px) {
   .left-sidebar {
     top: 70px;
@@ -334,9 +411,8 @@ const progressLabel = computed(() => `${Math.round((props.focusProgress || 0) * 
     width: calc(100vw - 24px);
   }
 
-  .difficulty-options,
-  .growth-grid {
-    grid-template-columns: 1fr;
+  .growth-row {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 </style>

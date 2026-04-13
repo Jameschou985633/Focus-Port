@@ -82,9 +82,6 @@ const emit = defineEmits(['draft-deployed', 'start-timeline-task'])
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
   scrollbar-width: thin;
   scrollbar-color: rgba(115, 224, 255, 0.4) rgba(10, 25, 47, 0.6);
 }

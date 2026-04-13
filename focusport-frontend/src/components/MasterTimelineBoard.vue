@@ -109,9 +109,7 @@ const sendBackToPending = (taskId) => {
 <style scoped>
 .timeline-board {
   display: flex;
-  flex: 1;
   flex-direction: column;
-  min-height: 0;
   border-radius: 24px;
   padding: 18px;
   background:
@@ -187,10 +185,9 @@ const sendBackToPending = (taskId) => {
 
 .section-list {
   display: grid;
-  flex: 1;
-  min-height: 0;
   gap: 12px;
   margin-top: 14px;
+  max-height: 400px;
   overflow-y: auto;
   padding-right: 6px;
   scrollbar-color: #00ffff rgba(10, 25, 47, 0.9);

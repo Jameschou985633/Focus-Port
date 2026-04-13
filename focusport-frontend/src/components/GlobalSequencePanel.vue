@@ -9,7 +9,10 @@ const timelineStore = useMasterTimelineStore()
 const draftListRef = ref(null)
 
 const handlePreview = async () => {
-  await timelineStore.requestAIPreview(timelineStore.previewGoal)
+  await timelineStore.requestAIPreview(timelineStore.previewGoal, {
+    style: timelineStore.decomposeStyle,
+    mode: 'replace'
+  })
 }
 
 const captureSourceRects = () => {
@@ -36,6 +39,18 @@ const addDraftStep = () => {
 const removeDraftStep = (id) => {
   timelineStore.removeDraftItem(id)
 }
+
+const moveDraftStep = (id, direction) => {
+  timelineStore.moveDraftItem(id, direction)
+}
+
+const updateTitle = (id, event) => {
+  timelineStore.updateDraftItem(id, { title: event.target.value })
+}
+
+const updateEstimatedPomodoros = (id, event) => {
+  timelineStore.updateDraftItem(id, { estimatedPomodoros: Number(event.target.value) || 1 })
+}
 </script>
 
 <template>
@@ -51,7 +66,7 @@ const removeDraftStep = (id) => {
         :disabled="timelineStore.isGenerating"
         @click="handlePreview"
       >
-        {{ timelineStore.isGenerating ? 'Qwen 预演中...' : 'AI 拆解' }}
+        {{ timelineStore.isGenerating ? 'AI 拆解中...' : 'AI 拆解' }}
       </button>
     </header>
 
@@ -60,43 +75,94 @@ const removeDraftStep = (id) => {
       <textarea
         v-model="timelineStore.previewGoal"
         class="goal-input"
-        placeholder="输入今天要推进的目标，例如：完成数电第二章错题整理并做一轮口头复盘。"
+        placeholder="输入今天要推进的目标，例如：完成高数第二章错题并复盘。"
       />
+    </div>
+
+    <div class="style-shell">
+      <label class="field-label">拆解风格</label>
+      <div class="style-row">
+        <button
+          type="button"
+          class="style-btn"
+          :class="{ active: timelineStore.decomposeStyle === 'conservative' }"
+          @click="timelineStore.decomposeStyle = 'conservative'"
+        >
+          conservative
+        </button>
+        <button
+          type="button"
+          class="style-btn"
+          :class="{ active: timelineStore.decomposeStyle === 'balanced' }"
+          @click="timelineStore.decomposeStyle = 'balanced'"
+        >
+          balanced
+        </button>
+        <button
+          type="button"
+          class="style-btn"
+          :class="{ active: timelineStore.decomposeStyle === 'sprint' }"
+          @click="timelineStore.decomposeStyle = 'sprint'"
+        >
+          sprint
+        </button>
+      </div>
     </div>
 
     <p v-if="timelineStore.generationError" class="error-line">{{ timelineStore.generationError }}</p>
 
     <div ref="draftListRef" class="draft-list">
       <article
-        v-for="item in timelineStore.preflightDraft"
+        v-for="(item, index) in timelineStore.preflightDraft"
         :key="item.id"
         class="draft-card"
         :data-sequence-draft-card="item.id"
       >
-        <button type="button" class="remove-btn" @click="removeDraftStep(item.id)">❌</button>
+        <button type="button" class="remove-btn" @click="removeDraftStep(item.id)">×</button>
         <div class="draft-fields">
           <input
-            v-model="item.task"
+            :value="item.title"
             type="text"
             class="ghost-input task-input"
-            placeholder="可直接编辑任务文本"
+            placeholder="可直接执行的任务动作"
+            @input="updateTitle(item.id, $event)"
           />
           <div class="meta-row">
             <label>
-              <span>建议专注</span>
-              <input v-model.number="item.minutes" type="number" min="5" max="180" class="ghost-input minutes-input" />
+              <span>预计番茄</span>
+              <input
+                :value="item.estimatedPomodoros"
+                type="number"
+                min="1"
+                max="3"
+                class="ghost-input minutes-input"
+                @input="updateEstimatedPomodoros(item.id, $event)"
+              />
             </label>
             <label>
               <span>优先级</span>
-              <input v-model.number="item.priority" type="number" min="1" max="99" class="ghost-input priority-input" />
+              <input :value="item.priority" type="number" class="ghost-input priority-input" disabled />
             </label>
+          </div>
+          <p v-if="item.reason" class="reason-line">原因：{{ item.reason }}</p>
+          <p v-if="item.doneDefinition" class="done-line">完成标准：{{ item.doneDefinition }}</p>
+          <div class="sort-row">
+            <button type="button" class="mini-btn" :disabled="index === 0" @click="moveDraftStep(item.id, 'up')">上移</button>
+            <button
+              type="button"
+              class="mini-btn"
+              :disabled="index === timelineStore.preflightDraft.length - 1"
+              @click="moveDraftStep(item.id, 'down')"
+            >
+              下移
+            </button>
           </div>
         </div>
       </article>
     </div>
 
     <div class="action-row">
-      <button type="button" class="sequence-btn secondary" @click="addDraftStep">＋新增步序</button>
+      <button type="button" class="sequence-btn secondary" @click="addDraftStep">+ 新增步骤</button>
       <button
         type="button"
         class="sequence-btn confirm"
@@ -118,6 +184,7 @@ const removeDraftStep = (id) => {
     rgba(4, 9, 20, 0.92);
   border: 1px solid rgba(0, 255, 255, 0.18);
   box-shadow: 0 24px 56px rgba(2, 8, 18, 0.4);
+  margin-bottom: 14px;
 }
 
 .panel-header {
@@ -141,7 +208,8 @@ const removeDraftStep = (id) => {
   text-shadow: 0 0 16px rgba(0, 255, 255, 0.22);
 }
 
-.goal-input-shell {
+.goal-input-shell,
+.style-shell {
   margin-top: 14px;
 }
 
@@ -171,6 +239,26 @@ const removeDraftStep = (id) => {
   box-shadow: 0 0 0 1px rgba(0, 255, 255, 0.16), 0 0 20px rgba(0, 255, 255, 0.08);
 }
 
+.style-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.style-btn {
+  border: 1px solid rgba(0, 255, 255, 0.18);
+  border-radius: 12px;
+  min-height: 36px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #effcff;
+  cursor: pointer;
+}
+
+.style-btn.active {
+  border-color: rgba(16, 216, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(16, 216, 255, 0.25) inset;
+}
+
 .error-line {
   margin: 10px 0 0;
   color: #ff9aa7;
@@ -182,8 +270,9 @@ const removeDraftStep = (id) => {
   flex-direction: column;
   gap: 10px;
   margin-top: 14px;
-  max-height: 240px;
+  max-height: 400px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding-right: 6px;
   scrollbar-color: #00ffff rgba(10, 25, 47, 0.9);
   scrollbar-width: thin;
@@ -270,6 +359,35 @@ const removeDraftStep = (id) => {
   color: rgba(206, 244, 255, 0.68);
 }
 
+.reason-line,
+.done-line {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: rgba(204, 242, 255, 0.72);
+  line-height: 1.5;
+}
+
+.sort-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mini-btn {
+  border: 1px solid rgba(0, 255, 255, 0.18);
+  border-radius: 10px;
+  min-height: 30px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #effcff;
+  cursor: pointer;
+}
+
+.mini-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .action-row {
   display: flex;
   gap: 10px;
@@ -306,6 +424,10 @@ const removeDraftStep = (id) => {
   .meta-row {
     grid-template-columns: 1fr;
     flex-direction: column;
+  }
+
+  .style-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

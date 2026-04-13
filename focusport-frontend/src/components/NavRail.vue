@@ -24,12 +24,6 @@ const navItems = [
     subtitle: WORLD_NAMES.exchangePort.en
   },
   {
-    id: 'vault',
-    icon: 'BP',
-    label: composeWorldLabel(WORLD_NAMES.blueprintVault),
-    subtitle: WORLD_NAMES.blueprintVault.en
-  },
-  {
     id: 'fleet',
     icon: 'FX',
     label: composeWorldLabel(WORLD_NAMES.fleetNexus),
