@@ -33,9 +33,37 @@ const sendRequest = async () => {
     newFriendName.value = ''
     showAddFriend.value = false
     alert('好友请求已发送！')
+    loadFriends()
   } catch (error) {
     alert('发送失败: ' + (error.response?.data?.detail || error.message))
   }
+}
+
+const respondRequest = async (reqId, action) => {
+  try {
+    await friendApi.respond(reqId, action === 'accept' ? 'accepted' : 'rejected')
+    loadFriends()
+  } catch (error) {
+    alert('操作失败: ' + (error.response?.data?.detail || error.message))
+  }
+}
+
+const deleteFriend = async (friendUsername) => {
+  if (!confirm(`确定要删除好友 ${friendUsername} 吗？`)) return
+  try {
+    await friendApi.delete(userStore.username, friendUsername)
+    loadFriends()
+  } catch (error) {
+    alert('删除失败: ' + (error.response?.data?.detail || error.message))
+  }
+}
+
+const openChat = (friendUsername) => {
+  router.push({ path: '/mail', query: { to: friendUsername } })
+}
+
+const openPK = (friendUsername) => {
+  router.push({ path: '/playground', query: { opponent: friendUsername } })
 }
 
 const goBack = () => router.push('/')
@@ -59,8 +87,8 @@ onMounted(() => loadFriends())
           <span class="friend-avatar">👤</span>
           <span class="friend-name">{{ req.friend_username }}</span>
           <div class="friend-actions">
-            <button class="accept-btn">接受</button>
-            <button class="reject-btn">拒绝</button>
+            <button class="accept-btn" @click="respondRequest(req.id, 'accept')">接受</button>
+            <button class="reject-btn" @click="respondRequest(req.id, 'reject')">拒绝</button>
           </div>
         </div>
       </div>
@@ -77,8 +105,9 @@ onMounted(() => loadFriends())
             <span class="friend-status">在线</span>
           </div>
           <div class="friend-actions">
-            <button class="action-btn">💬</button>
-            <button class="action-btn">⚔️</button>
+            <button class="action-btn" @click="openChat(friend.friend_username)" title="发消息">💬</button>
+            <button class="action-btn" @click="openPK(friend.friend_username)" title="对战">⚔️</button>
+            <button class="action-btn delete" @click="deleteFriend(friend.friend_username)" title="删除好友">✕</button>
           </div>
         </div>
         <div v-if="friends.length === 0" class="empty-state">
@@ -198,7 +227,11 @@ h1 { margin: 0; font-size: 24px; }
   border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
+  transition: all 0.2s;
 }
+
+.action-btn:hover { background: rgba(255, 255, 255, 0.2); }
+.action-btn.delete:hover { background: rgba(248, 113, 113, 0.3); }
 
 .accept-btn { background: rgba(74, 222, 128, 0.3); }
 .reject-btn { background: rgba(248, 113, 113, 0.3); }

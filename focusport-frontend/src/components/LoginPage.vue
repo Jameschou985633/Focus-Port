@@ -120,6 +120,7 @@ const switchMode = () => {
         <p @click="switchMode">
           {{ isLogin ? '没有账号？点击注册' : '已有账号？点击登录' }}
         </p>
+        <p v-if="isLogin" class="forgot-hint">如需重置密码请联系管理员</p>
       </div>
     </div>
 
@@ -278,6 +279,13 @@ const switchMode = () => {
   color: #7dd3fc;
   cursor: pointer;
   margin: 0;
+}
+
+.forgot-hint {
+  margin-top: 8px !important;
+  color: rgba(222, 240, 255, 0.4) !important;
+  cursor: default !important;
+  font-size: 12px;
 }
 
 .features-preview {

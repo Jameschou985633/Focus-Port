@@ -5,13 +5,13 @@ const router = useRouter()
 const route = useRoute()
 
 const mainNavItems = [
-  { path: '/', icon: 'DOCK', label: '实体工程坞' },
-  { path: '/shop', icon: 'EX', label: '物质交换港' },
+  { path: '/island', icon: 'DOCK', label: '实体工程坞' },
+  { path: '/shop', icon: 'EX', label: '交换港' },
   { path: '/exam', icon: 'PR', label: '协议编译站' },
   { path: '/more', icon: 'CTRL', label: '舰长档案' }
 ]
 
-const isActive = (path) => (path === '/' ? route.path === '/' : route.path.startsWith(path))
+const isActive = (path) => route.path.startsWith(path)
 </script>
 
 <template>

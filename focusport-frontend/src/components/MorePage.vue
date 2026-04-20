@@ -1,7 +1,8 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import { useDimensionStore } from '../stores/dimension'
 import SpaceButton from './base/SpaceButton.vue'
 import AvatarSelector from './base/AvatarSelector.vue'
 import NotificationSettings from './NotificationSettings.vue'
@@ -9,6 +10,7 @@ import axios from 'axios'
 
 const router = useRouter()
 const userStore = useUserStore()
+const dimensionStore = useDimensionStore()
 
 const userAvatar = ref(userStore.avatar || '👤')
 const userNickname = ref(userStore.username || '')
@@ -67,6 +69,11 @@ const expProgress = computed(() => {
   return Math.max(0, ((userExp.value - currentLevelExp) / (nextLevelExp - currentLevelExp)) * 100)
 })
 
+const mapWorldEntries = [
+  { code: 'PHYSICAL', label: '物理世界', mode: '3D' },
+  { code: 'GAIA', label: '盖亚拓扑', mode: '2D' }
+]
+
 const settings = computed(() => [
   { icon: '⏳', title: '自律中枢', desc: '进入番茄钟、今日任务与倒数日面板', action: () => router.push('/focus-hub') },
   { icon: '👤', title: '个人资料', desc: '修改头像和昵称', action: openProfileEditor },
@@ -80,6 +87,15 @@ const settings = computed(() => [
 
 function goBack() {
   router.push('/')
+}
+
+function openMapWorld(code) {
+  const targetDimension = code === 'PHYSICAL' ? 'PHYSICAL' : 'GAIA'
+  dimensionStore.setDimension(targetDimension, userStore.username)
+  router.push({
+    path: '/island',
+    query: { dimension: targetDimension }
+  })
 }
 
 function logout() {
@@ -189,6 +205,23 @@ onMounted(loadUserData)
           <div class="exp-fill" :style="{ width: Math.min(expProgress, 100) + '%' }"></div>
           <span class="exp-text">{{ userExp }} EXP</span>
         </div>
+      </div>
+    </div>
+
+    <div class="map-entry-panel">
+      <div class="list-header">我的地图</div>
+      <div class="map-entry-stack">
+        <button
+          v-for="entry in mapWorldEntries"
+          :key="entry.code"
+          type="button"
+          class="map-entry-item"
+          :class="{ active: dimensionStore.activeDimension === entry.code }"
+          @click="openMapWorld(entry.code)"
+        >
+          <span class="map-entry-glyph" aria-hidden="true"></span>
+          <span class="map-entry-text">{{ entry.label }} ({{ entry.mode }})</span>
+        </button>
       </div>
     </div>
 
@@ -424,6 +457,63 @@ onMounted(loadUserData)
   top: 50%;
   transform: translateY(-50%);
   font-size: 12px;
+}
+
+.map-entry-panel {
+  max-width: 960px;
+  margin: 0 auto 20px;
+  padding: 20px;
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.map-entry-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.map-entry-item {
+  width: 100%;
+  min-height: 64px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.2), rgba(15, 23, 42, 0.35));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  text-align: left;
+  color: #e2e8f0;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.map-entry-item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(125, 211, 252, 0.65);
+}
+
+.map-entry-item.active {
+  border-color: rgba(56, 189, 248, 0.9);
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.2), rgba(30, 41, 59, 0.4));
+}
+
+.map-entry-glyph {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #0b84ff;
+  box-shadow: 0 0 0 4px rgba(11, 132, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.map-entry-text {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #7dd3fc;
+  letter-spacing: 0.12px;
 }
 
 .settings-list {

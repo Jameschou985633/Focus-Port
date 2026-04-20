@@ -18,7 +18,7 @@ const links = [
   },
   {
     id: 'bili-archive',
-    name: '全息影像档案 · BILI VISUAL ARCHIVE',
+    name: '影像档案 · BILI VISUAL ARCHIVE',
     tag: '// 哔哩哔哩学习视窗',
     url: 'https://space.bilibili.com/1035929235'
   }

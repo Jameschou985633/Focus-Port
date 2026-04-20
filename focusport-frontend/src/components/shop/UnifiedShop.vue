@@ -37,7 +37,7 @@ const currentDimension = computed(() => dimensionStore.activeDimension)
 
 const dimensionTabs = [
   { code: 'PHYSICAL', label: composeWorldLabel(WORLD_NAMES.physical), caption: '3D 实体模型与槽位部署' },
-  { code: 'GAIA', label: composeWorldLabel(WORLD_NAMES.gaia), caption: '全息 2D 等距资产' }
+  { code: 'GAIA', label: composeWorldLabel(WORLD_NAMES.gaia), caption: '2D 等距资产' }
 ]
 
 const categoryTabs = computed(() => (
@@ -184,7 +184,7 @@ const loadItems = async () => {
   } catch (error) {
     console.error('Failed to load shop items', error)
     backendItems.value = []
-    feedbackMessage.value = '交换港目录载入失败，请稍后重试。'
+    feedbackMessage.value = '物质交换港目录载入失败，请稍后重试。'
   } finally {
     isLoading.value = false
   }
@@ -276,7 +276,7 @@ const buyItem = async (item, triggerElement = null) => {
   feedbackMessage.value = ''
   try {
     const response = await unifiedShopApi.buy(username.value, item.id, 1)
-    feedbackMessage.value = response.data.message || '购买成功，资产已写入全息蓝图库。'
+    feedbackMessage.value = response.data.message || '购买成功，资产已写入工程装备仓。'
     animateToBlueprintVault(triggerElement, item.name_cn || item.name)
     await reloadShopState()
   } catch (error) {
@@ -293,7 +293,7 @@ const sendToBackpackPlacement = async (item) => {
     inventoryUnit = inventoryStore.beginPlacementFromCatalog(item)
   }
   if (!inventoryUnit) {
-    feedbackMessage.value = '蓝图库中暂时没有可部署实体，请先购买后再试。'
+    feedbackMessage.value = '装备仓中暂时没有可部署实体，请先购买后再试。'
     return
   }
 
@@ -357,7 +357,7 @@ onMounted(async () => {
         <span class="title-icon">{{ currentDimension === 'GAIA' ? 'GAIA' : '3D' }}</span>
         <div>
           <h1>{{ composeWorldLabel(WORLD_NAMES.exchangePort) }}</h1>
-          <p>统一账单驱动双维采购，购买成功后将以数据传输动画写入全息蓝图库。</p>
+          <p>统一账单驱动双维采购，购买成功后将以数据传输动画写入工程装备仓。</p>
         </div>
       </div>
       <div class="wallet">
@@ -468,7 +468,7 @@ onMounted(async () => {
     </section>
 
     <div v-if="isLoading" class="loading-state">
-      正在同步 {{ currentDimension }} 维度交换港...
+      正在同步 {{ currentDimension }} 维度物质交换港...
     </div>
 
     <div v-if="previewItem" class="preview-overlay" @click.self="previewItem = null">

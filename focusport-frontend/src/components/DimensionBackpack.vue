@@ -140,7 +140,7 @@ onUnmounted(() => {
 <style scoped>
 .backpack-shell {
   position: fixed;
-  left: 22px;
+  right: 22px;
   bottom: 20px;
   z-index: 32;
   width: min(340px, calc(100vw - 44px));
@@ -351,7 +351,6 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .backpack-shell {
-    left: 12px;
     right: 12px;
     bottom: 88px;
     width: auto;

@@ -46,6 +46,21 @@ const progressPercent = computed(() => {
   return Math.round(unlockedCount.value / totalCount.value * 100)
 })
 
+const selectedAchievement = ref(null)
+
+const openDetail = (achievement) => {
+  selectedAchievement.value = achievement
+}
+
+const closeDetail = () => {
+  selectedAchievement.value = null
+}
+
+const getUnlockDate = (achievementId) => {
+  const ua = userAchievements.value.find(a => a.achievement_id === achievementId)
+  return ua?.unlocked_at || ua?.unlocked_date || null
+}
+
 const goBack = () => router.push('/')
 
 onMounted(() => loadAchievements())
@@ -80,6 +95,7 @@ onMounted(() => loadAchievements())
         v-for="achievement in filteredAchievements"
         :key="achievement.id"
         :class="['achievement-card', { unlocked: isUnlocked(achievement.id) }]"
+        @click="openDetail(achievement)"
       >
         <div class="achievement-icon">{{ isUnlocked(achievement.id) ? achievement.icon : '🔒' }}</div>
         <div class="achievement-info">
@@ -95,6 +111,31 @@ onMounted(() => loadAchievements())
     <div v-if="isLoading" class="loading-overlay">
       <div class="spinner"></div>
     </div>
+
+    <!-- Achievement Detail Modal -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="selectedAchievement" class="detail-overlay" @click.self="closeDetail">
+          <div class="detail-card">
+            <button class="detail-close" @click="closeDetail">×</button>
+            <div class="detail-icon-wrap">
+              <span class="detail-icon">{{ isUnlocked(selectedAchievement.id) ? selectedAchievement.icon : '🔒' }}</span>
+            </div>
+            <h2 class="detail-name">{{ isUnlocked(selectedAchievement.id) ? selectedAchievement.name : '???' }}</h2>
+            <p class="detail-desc">{{ selectedAchievement.description || '继续努力解锁这个成就' }}</p>
+            <div class="detail-meta">
+              <span class="detail-badge category">{{ selectedAchievement.category }}</span>
+              <span class="detail-badge exp">+{{ selectedAchievement.exp_reward || 0 }} EXP</span>
+              <span v-if="isUnlocked(selectedAchievement.id)" class="detail-badge unlocked">已解锁 ✅</span>
+              <span v-else class="detail-badge locked">未解锁</span>
+            </div>
+            <p v-if="getUnlockDate(selectedAchievement.id)" class="detail-date">
+              解锁于 {{ getUnlockDate(selectedAchievement.id) }}
+            </p>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -234,4 +275,61 @@ h1 { margin: 0; font-size: 24px; }
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.achievement-card { cursor: pointer; }
+.achievement-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+
+/* Detail Modal */
+.detail-overlay {
+  position: fixed; inset: 0;
+  background: rgba(2, 6, 23, 0.75);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 20px;
+}
+
+.detail-card {
+  position: relative;
+  width: 100%; max-width: 360px;
+  background: linear-gradient(180deg, #0f172a, #1e293b);
+  border: 1.5px solid rgba(129, 214, 255, 0.34);
+  border-radius: 24px;
+  padding: 32px 24px;
+  text-align: center;
+  box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+}
+
+.detail-close {
+  position: absolute; top: 16px; right: 16px;
+  width: 32px; height: 32px;
+  background: rgba(255,255,255,0.05); border: none; border-radius: 8px;
+  color: rgba(222,240,255,0.7); font-size: 20px; cursor: pointer;
+}
+.detail-close:hover { background: rgba(255,255,255,0.1); }
+
+.detail-icon-wrap {
+  width: 80px; height: 80px; margin: 0 auto 16px;
+  display: grid; place-items: center;
+  background: rgba(255,255,255,0.08); border-radius: 20px;
+}
+
+.detail-icon { font-size: 48px; }
+.detail-name { margin: 0 0 8px; font-size: 20px; }
+.detail-desc { margin: 0 0 16px; color: rgba(222,240,255,0.7); font-size: 14px; line-height: 1.6; }
+
+.detail-meta { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+
+.detail-badge {
+  padding: 4px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+}
+.detail-badge.category { background: rgba(59,130,246,0.2); color: #93c5fd; }
+.detail-badge.exp { background: rgba(251,191,36,0.2); color: #fbbf24; }
+.detail-badge.unlocked { background: rgba(74,222,128,0.2); color: #4ade80; }
+.detail-badge.locked { background: rgba(255,255,255,0.06); color: rgba(222,240,255,0.5); }
+
+.detail-date { margin: 0; font-size: 12px; color: rgba(222,240,255,0.4); }
+
+.modal-enter-active, .modal-leave-active { transition: all 0.25s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+.modal-enter-from .detail-card, .modal-leave-to .detail-card { transform: scale(0.95); }
 </style>

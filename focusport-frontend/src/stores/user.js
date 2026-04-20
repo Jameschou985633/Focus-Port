@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import axios from 'axios'
-
-const API_BASE = 'http://127.0.0.1:8000'
+import { authApi, growthApi } from '../api'
+import { useFocusHubStore } from './focusHub'
+import { useMasterTimelineStore } from './masterTimeline'
 
 export const useUserStore = defineStore('user', () => {
   // State
@@ -31,7 +31,7 @@ export const useUserStore = defineStore('user', () => {
 
     isLoading.value = true
     try {
-      const res = await axios.get(`${API_BASE}/api/growth/${username.value}`)
+      const res = await growthApi.get(username.value)
       if (res.data.growth) {
         growth.value = res.data.growth
         lastFetch.value = Date.now()
@@ -45,10 +45,7 @@ export const useUserStore = defineStore('user', () => {
 
   async function login(user, pass) {
     try {
-      const res = await axios.post(`${API_BASE}/api/login`, {
-        username: user,
-        password: pass
-      })
+      const res = await authApi.login(user, pass)
       username.value = user
       localStorage.setItem('username', user)
       await loadGrowth()
@@ -67,6 +64,10 @@ export const useUserStore = defineStore('user', () => {
       discipline_score: 50,
       streak_days: 0
     }
+    try {
+      const focusHubStore = useFocusHubStore()
+      focusHubStore.clearTicker()
+    } catch (e) { /* store not initialized yet */ }
   }
 
   // Computed

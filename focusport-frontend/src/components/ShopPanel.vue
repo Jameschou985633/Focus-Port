@@ -1,11 +1,10 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+import { shopApi, inventoryApi, islandApi } from '../api'
 
 const router = useRouter()
 const username = ref(localStorage.getItem('username') || 'guest')
-const API_BASE = 'http://127.0.0.1:8000'
 
 // 用户数据
 const userDiamonds = ref(0)
@@ -26,7 +25,7 @@ const purchasingId = ref(null)
 // 加载用户钻石
 const loadUserDiamonds = async () => {
   try {
-    const res = await axios.get(`${API_BASE}/api/shop/diamonds/${username.value}`)
+    const res = await shopApi.diamonds(username.value)
     userDiamonds.value = res.data.diamonds || 0
   } catch (error) {
     console.error('加载钻石失败:', error)
@@ -40,8 +39,8 @@ const loadShop = async () => {
   try {
     // 加载装饰物和皮肤
     const [decorRes, skinsRes] = await Promise.all([
-      axios.get(`${API_BASE}/api/studyroom/items`),
-      axios.get(`${API_BASE}/api/island/skins`)
+      shopApi.studyroomItems(),
+      islandApi.skins()
     ])
     decorations.value = decorRes.data.items || []
     skins.value = skinsRes.data.skins || []
@@ -58,7 +57,7 @@ const loadShop = async () => {
 // 加载背包
 const loadInventory = async () => {
   try {
-    const res = await axios.get(`${API_BASE}/api/inventory/${username.value}`)
+    const res = await inventoryApi.get(username.value)
     inventory.value = res.data.items || []
   } catch (error) {
     console.error('加载背包失败:', error)
@@ -69,7 +68,7 @@ const loadInventory = async () => {
 // 加载用户皮肤
 const loadUserSkins = async () => {
   try {
-    const res = await axios.get(`${API_BASE}/api/island/skins/${username.value}`)
+    const res = await islandApi.userSkins(username.value)
     userSkins.value = res.data.owned_skins || []
   } catch (error) {
     console.error('加载用户皮肤失败:', error)
@@ -98,10 +97,7 @@ const buyDecoration = async (item) => {
 
   purchasingId.value = item.id
   try {
-    const res = await axios.post(`${API_BASE}/api/studyroom/buy`, {
-      username: username.value,
-      item_id: item.id
-    })
+    const res = await shopApi.buyStudyroom(username.value, item.id)
     alert(res.data.message || '购买成功!')
     await loadUserDiamonds()
     await loadInventory()
@@ -126,10 +122,7 @@ const buySkin = async (skin) => {
   if (!confirm(`确定要花费 ${skin.cost} 鑫石购买 ${skin.name} 吗?`)) return
   purchasingId.value = skin.id
   try {
-    const res = await axios.post(`${API_BASE}/api/island/skins/buy`, {
-      username: username.value,
-      skin_id: skin.id
-    })
+    const res = await islandApi.buySkin(username.value, skin.id)
     alert(res.data.message || '购买成功!')
     await loadUserDiamonds()
     await loadUserSkins()
@@ -151,10 +144,7 @@ const buyBoost = async (item) => {
 
   purchasingId.value = item.id
   try {
-    const res = await axios.post(`${API_BASE}/api/studyroom/buy`, {
-      username: username.value,
-      item_id: item.id
-    })
+    const res = await shopApi.buyStudyroom(username.value, item.id)
     alert(res.data.message || '购买成功!')
     await loadUserDiamonds()
     await loadInventory()
@@ -195,8 +185,8 @@ const goBack = () => router.push('/')
     <div class="shop-content">
       <!-- 装饰分类 -->
       <div v-if="activeTab === 'decorations'" class="items-grid">
-        <div v-for="item in decorations" :key="item.id" class="shop-card">
- :class="{ owned: isInInventory(item.id), 'rare': item.rarity === 'legendary' }">
+        <div v-for="item in decorations" :key="item.id" class="shop-card"
+          :class="{ owned: isInInventory(item.id), 'rare': item.rarity === 'legendary' }">
           <div class="card-icon">{{ item.icon }}</div>
           <div class="card-name">{{ item.name }}</div>
           <div class="card-price">
@@ -338,7 +328,7 @@ h1 {
 }
 .items-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
 }
 .shop-card {

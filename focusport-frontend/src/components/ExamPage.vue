@@ -1,14 +1,11 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+import { examApi } from '../api'
 import { useUserStore } from '../stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
-
-// 🌐 API 地址：优先使用环境变量（cpolar 公网地址）
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
 const exams = ref([])
 const selectedExam = ref(null)
@@ -30,7 +27,7 @@ let gradingPollTimer = null
 const loadExams = async () => {
   isLoading.value = true
   try {
-    const res = await axios.get(`${API_BASE}/api/exams`)
+    const res = await examApi.list()
     exams.value = res.data.exams || []
   } catch (error) {
     console.error('加载考试列表失败:', error)
@@ -84,12 +81,12 @@ const submitExam = async () => {
   isSubmitting.value = true
 
   try {
-    const res = await axios.post(`${API_BASE}/api/submit_exam`, {
-      exam_code: selectedExam.value.exam_code,
-      username: userStore.username,
-      answers: answers.value,
-      time_used: (selectedExam.value.time_limit || 60) * 60 - timeLeft.value
-    })
+    const res = await examApi.submit(
+      selectedExam.value.exam_code,
+      userStore.username,
+      answers.value,
+      (selectedExam.value.time_limit || 60) * 60 - timeLeft.value
+    )
 
     result.value = res.data
     showResult.value = true
@@ -117,7 +114,7 @@ const startGradingPoll = () => {
   gradingPollTimer = setInterval(async () => {
     if (!aiSubmissionId.value) return
     try {
-      const res = await axios.get(`${API_BASE}/api/exam/grading_status/${aiSubmissionId.value}`)
+      const res = await examApi.gradingStatus(aiSubmissionId.value)
       if (res.data.status === 'completed') {
         aiGradingStatus.value = 'completed'
         aiFeedback.value = res.data
@@ -138,12 +135,12 @@ const startGradingPoll = () => {
 const analyzeMistake = async (mistake) => {
   mistake.analyzing = true
   try {
-    const res = await axios.post(`${API_BASE}/api/exam/ai_analysis`, {
-      question: mistake.question,
-      user_answer: mistake.user,
-      correct_answer: mistake.correct,
-      context: selectedExam.value.title
-    })
+    const res = await examApi.aiAnalysis(
+      mistake.question,
+      mistake.user,
+      mistake.correct,
+      selectedExam.value.title
+    )
     mistake.aiAnalysis = res.data.analysis
     mistake.showAnalysis = true
   } catch (error) {
@@ -330,7 +327,7 @@ onUnmounted(() => {
             <span>主观题得分</span>
             <span class="ai-score">{{ aiFeedback.subjective_score || 0 }}</span>
           </div>
-          <div class="ai-feedback" v-html="aiFeedback.feedback?.replace(/\n/g, '<br>')"></div>
+          <div class="ai-feedback" v-html="(aiFeedback.feedback || '').replace(/\n/g, '<br>')"></div>
         </div>
       </div>
 

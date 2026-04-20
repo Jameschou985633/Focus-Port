@@ -115,18 +115,18 @@ onMounted(() => {
     <!-- 排行榜列表 -->
     <div class="rank-list">
       <div
-        v-for="(item, index) in rankings.slice(3)"
+        v-for="(item, index) in rankings"
         :key="item.username"
         class="rank-item"
         :class="{ isMe: item.username === userStore.username }"
       >
-        <span class="rank-number">{{ index + 4 }}</span>
+        <span class="rank-number">{{ getRankStyle(index).icon || (index + 1) }}</span>
         <span class="rank-avatar">👤</span>
         <span class="rank-name">{{ item.username }}</span>
         <span class="rank-score">{{ item.score }}</span>
       </div>
 
-      <div v-if="rankings.length === 0" class="empty-state">
+      <div v-if="rankings.length === 0 && !isLoading" class="empty-state">
         <p>暂无排行数据</p>
       </div>
     </div>

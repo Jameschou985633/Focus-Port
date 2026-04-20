@@ -95,7 +95,7 @@ const loadComments = async (postId) => {
 }
 
 const submitComment = async (post) => {
-  const content = commentInputs.value[post.id]?.trim()
+  const content = (commentInputs.value[post.id] || '').trim()
   if (!content) return
 
   commentSubmitting.value[post.id] = true
@@ -152,7 +152,42 @@ const onPostCreated = () => {
 
 onMounted(() => {
   loadPosts(true)
+  window.addEventListener('keydown', handleKeydown)
 })
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+})
+
+// Lightbox
+const lightboxImages = ref([])
+const lightboxIndex = ref(0)
+const lightboxVisible = ref(false)
+
+const openLightbox = (urls, startIndex) => {
+  lightboxImages.value = urls
+  lightboxIndex.value = startIndex
+  lightboxVisible.value = true
+}
+
+const closeLightbox = () => {
+  lightboxVisible.value = false
+}
+
+const lightboxPrev = () => {
+  lightboxIndex.value = (lightboxIndex.value - 1 + lightboxImages.value.length) % lightboxImages.value.length
+}
+
+const lightboxNext = () => {
+  lightboxIndex.value = (lightboxIndex.value + 1) % lightboxImages.value.length
+}
+
+const handleKeydown = (e) => {
+  if (!lightboxVisible.value) return
+  if (e.key === 'Escape') closeLightbox()
+  if (e.key === 'ArrowLeft') lightboxPrev()
+  if (e.key === 'ArrowRight') lightboxNext()
+}
 </script>
 
 <template>
@@ -195,13 +230,14 @@ onMounted(() => {
 
         <div class="post-content">{{ post.content }}</div>
 
-        <div v-if="post.image_urls?.length" class="post-images">
+        <div v-if="post.image_urls?.length" class="post-images" :class="`grid-${Math.min(post.image_urls.length, 9)}`">
           <img
-            v-for="(url, idx) in post.image_urls.slice(0, 3)"
+            v-for="(url, idx) in post.image_urls"
             :key="idx"
             :src="url"
             class="post-image"
             loading="lazy"
+            @click="openLightbox(post.image_urls, idx)"
           />
         </div>
 
@@ -254,7 +290,7 @@ onMounted(() => {
             <button
               type="button"
               class="comment-submit"
-              :disabled="!commentInputs[post.id]?.trim() || commentSubmitting[post.id]"
+              :disabled="!(commentInputs[post.id] || '').trim() || commentSubmitting[post.id]"
               @click="submitComment(post)"
             >
               发送
@@ -286,6 +322,31 @@ onMounted(() => {
       :username="username"
       @created="onPostCreated"
     />
+
+    <!-- Image Lightbox -->
+    <Teleport to="body">
+      <Transition name="lightbox">
+        <div v-if="lightboxVisible" class="lightbox-overlay" @click.self="closeLightbox">
+          <button type="button" class="lightbox-close" @click="closeLightbox">×</button>
+          <button
+            v-if="lightboxImages.length > 1"
+            type="button"
+            class="lightbox-nav lightbox-prev"
+            @click="lightboxPrev"
+          >&#8249;</button>
+          <img :src="lightboxImages[lightboxIndex]" class="lightbox-image" />
+          <button
+            v-if="lightboxImages.length > 1"
+            type="button"
+            class="lightbox-nav lightbox-next"
+            @click="lightboxNext"
+          >&#8250;</button>
+          <div v-if="lightboxImages.length > 1" class="lightbox-counter">
+            {{ lightboxIndex + 1 }} / {{ lightboxImages.length }}
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </section>
 </template>
 
@@ -423,6 +484,12 @@ onMounted(() => {
   object-fit: cover;
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.post-image:hover {
+  transform: scale(1.03);
 }
 
 .post-actions {
@@ -602,4 +669,75 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(115, 224, 255, 0.4);
 }
+
+/* Lightbox */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.92);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+  z-index: 2001;
+}
+
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.lightbox-image {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  font-size: 32px;
+  cursor: pointer;
+  z-index: 2001;
+  line-height: 1;
+}
+
+.lightbox-nav:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.lightbox-prev { left: 20px; }
+.lightbox-next { right: 20px; }
+
+.lightbox-counter {
+  position: absolute;
+  bottom: 24px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+}
+
+.lightbox-enter-active, .lightbox-leave-active { transition: opacity 0.2s ease; }
+.lightbox-enter-from, .lightbox-leave-to { opacity: 0; }
 </style>

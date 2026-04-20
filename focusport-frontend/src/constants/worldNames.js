@@ -48,8 +48,8 @@ export const WORLD_NAMES = {
     en: 'EXCHANGE PORT'
   },
   blueprintVault: {
-    zh: '\u5168\u606f\u84dd\u56fe\u5e93',
-    en: 'BLUEPRINT VAULT'
+    zh: '\u5de5\u7a0b\u88c5\u5907\u4ed3',
+    en: 'ENGINEERING VAULT'
   },
   protocolStation: {
     zh: '\u534f\u8bae\u7f16\u8bd1\u7ad9',

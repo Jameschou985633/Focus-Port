@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch } from 'vue'
-import axios from 'axios'
+import { circleApi } from '../../api'
 import SpaceButton from '../base/SpaceButton.vue'
 
 const props = defineProps({
@@ -13,6 +13,9 @@ const emit = defineEmits(['update:visible', 'created'])
 const content = ref('')
 const visibility = ref('friends')
 const submitting = ref(false)
+const selectedFiles = ref([])
+const previewUrls = ref([])
+const fileInput = ref(null)
 
 const visibilityOptions = [
   { value: 'friends', label: '好友可见', icon: '👥' },
@@ -23,21 +26,61 @@ const close = () => {
   emit('update:visible', false)
 }
 
+const pickImages = () => {
+  if (selectedFiles.value.length >= 9) return
+  fileInput.value?.click()
+}
+
+const onFilesSelected = (event) => {
+  const files = Array.from(event.target.files || [])
+  const remaining = 9 - selectedFiles.value.length
+  const toAdd = files.slice(0, remaining).filter(f => {
+    if (f.size > 5 * 1024 * 1024) {
+      alert(`${f.name} 超过5MB限制`)
+      return false
+    }
+    return f.type.startsWith('image/')
+  })
+  toAdd.forEach(f => {
+    selectedFiles.value.push(f)
+    previewUrls.value.push(URL.createObjectURL(f))
+  })
+  event.target.value = ''
+}
+
+const removeImage = (index) => {
+  URL.revokeObjectURL(previewUrls.value[index])
+  selectedFiles.value.splice(index, 1)
+  previewUrls.value.splice(index, 1)
+}
+
 const submit = async () => {
-  if (!content.value.trim()) {
-    alert('请输入动态内容')
+  if (!content.value.trim() && selectedFiles.value.length === 0) {
+    alert('请输入动态内容或选择图片')
     return
   }
 
   submitting.value = true
   try {
-    await axios.post('/api/circle/posts', {
-      username: props.username,
-      content: content.value.trim(),
-      image_urls: [],
-      visibility: visibility.value
-    })
+    // Upload images first
+    const uploadedUrls = []
+    for (const file of selectedFiles.value) {
+      const res = await circleApi.uploadImage(file)
+      if (res.data?.url) uploadedUrls.push(res.data.url)
+    }
+
+    // Create post with image URLs
+    await circleApi.create(
+      props.username,
+      content.value.trim(),
+      uploadedUrls,
+      visibility.value
+    )
+
     content.value = ''
+    previewUrls.value.forEach(u => URL.revokeObjectURL(u))
+    selectedFiles.value = []
+    previewUrls.value = []
     emit('created')
     close()
   } catch (error) {
@@ -52,6 +95,9 @@ watch(() => props.visible, (val) => {
   if (!val) {
     content.value = ''
     visibility.value = 'friends'
+    previewUrls.value.forEach(u => URL.revokeObjectURL(u))
+    selectedFiles.value = []
+    previewUrls.value = []
   }
 })
 </script>
@@ -62,7 +108,7 @@ watch(() => props.visible, (val) => {
       <div v-if="visible" class="modal-overlay" @click.self="close">
         <div class="modal-content">
           <header class="modal-header">
-            <h3>✏️ 发布动态</h3>
+            <h3>发布动态</h3>
             <button type="button" class="close-btn" @click="close">×</button>
           </header>
 
@@ -75,6 +121,34 @@ watch(() => props.visible, (val) => {
               maxlength="1000"
             ></textarea>
             <div class="char-count">{{ content.length }}/1000</div>
+
+            <!-- Image picker -->
+            <div class="image-section">
+              <span class="section-label">图片 (最多9张)</span>
+              <div class="image-grid">
+                <div v-for="(url, idx) in previewUrls" :key="idx" class="image-preview">
+                  <img :src="url" class="preview-thumb" />
+                  <button type="button" class="remove-image" @click="removeImage(idx)">×</button>
+                </div>
+                <button
+                  v-if="previewUrls.length < 9"
+                  type="button"
+                  class="add-image-btn"
+                  @click="pickImages"
+                >
+                  <span class="add-icon">+</span>
+                  <span class="add-text">添加图片</span>
+                </button>
+              </div>
+              <input
+                ref="fileInput"
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                multiple
+                style="display: none"
+                @change="onFilesSelected"
+              />
+            </div>
 
             <div class="visibility-section">
               <span class="section-label">可见范围</span>
@@ -96,8 +170,8 @@ watch(() => props.visible, (val) => {
 
           <footer class="modal-footer">
             <SpaceButton variant="secondary" @click="close">取消</SpaceButton>
-            <SpaceButton variant="primary" :loading="submitting" @click="submit">
-              发布
+            <SpaceButton variant="primary" @click="submit">
+              {{ submitting ? '发布中...' : '发布' }}
             </SpaceButton>
           </footer>
         </div>
@@ -125,7 +199,8 @@ watch(() => props.visible, (val) => {
   border-radius: 20px;
   width: 100%;
   max-width: 480px;
-  overflow: hidden;
+  max-height: 90vh;
+  overflow-y: auto;
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
 }
 
@@ -194,7 +269,8 @@ watch(() => props.visible, (val) => {
   margin-top: 6px;
 }
 
-.visibility-section {
+/* Image section */
+.image-section {
   margin-top: 16px;
 }
 
@@ -203,6 +279,78 @@ watch(() => props.visible, (val) => {
   font-size: 0.85em;
   color: rgba(222, 240, 255, 0.6);
   margin-bottom: 10px;
+}
+
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.image-preview {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(115, 224, 255, 0.15);
+}
+
+.preview-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.remove-image {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  border-radius: 50%;
+  color: #ff6b6b;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.add-image-btn {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 2px dashed rgba(115, 224, 255, 0.2);
+  border-radius: 12px;
+  color: rgba(222, 240, 255, 0.5);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.add-image-btn:hover {
+  border-color: rgba(115, 224, 255, 0.4);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(222, 240, 255, 0.8);
+}
+
+.add-icon {
+  font-size: 24px;
+  font-weight: 300;
+}
+
+.add-text {
+  font-size: 11px;
+}
+
+/* Visibility */
+.visibility-section {
+  margin-top: 16px;
 }
 
 .visibility-options {

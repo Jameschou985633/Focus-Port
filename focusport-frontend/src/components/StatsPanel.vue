@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+import { growthApi, statsApi, achievementApi, leaderboardApi } from '../api'
 
 const router = useRouter()
 const username = ref(localStorage.getItem('username') || 'guest')
@@ -29,7 +29,7 @@ const userLevel = computed(() => {
 // 加载用户数据
 const loadUserGrowth = async () => {
   try {
-    const res = await axios.get(`http://127.0.0.1:8000/api/growth/${username.value}`)
+    const res = await growthApi.get(username.value)
     if (res.data.growth) {
       userGrowth.value = res.data.growth
     }
@@ -41,7 +41,7 @@ const loadUserGrowth = async () => {
 // 加载周数据
 const loadWeeklyData = async () => {
   try {
-    const res = await axios.get(`http://127.0.0.1:8000/api/stats/${username.value}?period=week`)
+    const res = await statsApi.get(username.value, 'week')
     weeklyData.value = res.data.daily_stats || []
   } catch (error) {
     console.error('加载周数据失败:', error)
@@ -51,7 +51,7 @@ const loadWeeklyData = async () => {
 // 加载成就
 const loadAchievements = async () => {
   try {
-    const res = await axios.get(`http://127.0.0.1:8000/api/achievements/${username.value}`)
+    const res = await achievementApi.user(username.value)
     achievements.value = res.data.achievements || []
   } catch (error) {
     console.error('加载成就失败:', error)
@@ -61,7 +61,7 @@ const loadAchievements = async () => {
 // 加载排行榜
 const loadLeaderboard = async () => {
   try {
-    const res = await axios.get('http://127.0.0.1:8000/api/leaderboard?type=focus&period=week')
+    const res = await leaderboardApi.get('focus', 'week')
     leaderboard.value = res.data.leaderboard || []
   } catch (error) {
     console.error('加载排行榜失败:', error)
@@ -138,7 +138,7 @@ onMounted(() => {
           <h3>本周专注</h3>
           <div class="week-chart">
             <div v-for="(day, index) in weeklyData" :key="index" class="day-bar">
-              <div class="bar-fill" :style="{ height: Math.min(100, day.focus_minutes / 2) + '%' }"></div>
+              <div class="bar-fill" :style="{ height: Math.min(100, (day.focus_minutes || 0) / 2) + '%' }"></div>
               <span class="day-label">{{ ['日', '一', '二', '三', '四', '五', '六'][index] }}</span>
             </div>
           </div>

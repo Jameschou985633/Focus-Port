@@ -151,6 +151,13 @@ export const useFocusHubStore = defineStore('focusHub', () => {
     }))
   }
 
+  // Debounced persist — avoids spamming localStorage on rapid state changes
+  let persistTimer = null
+  const debouncedPersist = () => {
+    if (persistTimer) clearTimeout(persistTimer)
+    persistTimer = setTimeout(persist, 300)
+  }
+
   const stopTicker = () => {
     if (tickHandle) {
       window.clearInterval(tickHandle)
@@ -554,7 +561,7 @@ export const useFocusHubStore = defineStore('focusHub', () => {
   }
 
   watch([lastAccessDate, pomodoro, todayTasks, archiveTasks, weekNodes, countdowns], () => {
-    persist()
+    debouncedPersist()
   }, { deep: true })
 
   const completedTaskCount = computed(() => todayTasks.value.filter((task) => task.completed).length)

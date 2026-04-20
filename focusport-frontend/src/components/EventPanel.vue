@@ -36,8 +36,8 @@ const doCheckin = async () => {
   try {
     const res = await checkinApi.checkin(userStore.username)
     if (res.data.success) {
-      const days = res.data.consecutive_day || res.data.consecutive_days || 1
-      const exp = res.data.reward_exp || res.data.exp_gained || 10
+      const days = res.data.consecutive_day || 1
+      const exp = res.data.reward_exp || 10
       alert(`签到成功！连续 ${days} 天，获得 ${exp} EXP`)
       await loadCheckinStatus()
       await userStore.loadGrowth()
@@ -114,17 +114,17 @@ onMounted(() => {
 
     <!-- 签到奖励预览 -->
     <div class="rewards-preview">
-      <div class="reward-item" :class="{ active: checkinStatus?.consecutive_days >= 7 }">
+      <div class="reward-item" :class="{ active: (checkinStatus?.consecutive_day || 0) >= 7 }">
         <span class="reward-day">7天</span>
         <span class="reward-icon">🎁</span>
         <span class="reward-exp">+100 EXP</span>
       </div>
-      <div class="reward-item" :class="{ active: checkinStatus?.consecutive_days >= 14 }">
+      <div class="reward-item" :class="{ active: (checkinStatus?.consecutive_day || 0) >= 14 }">
         <span class="reward-day">14天</span>
         <span class="reward-icon">🎁</span>
         <span class="reward-exp">+200 EXP</span>
       </div>
-      <div class="reward-item" :class="{ active: checkinStatus?.consecutive_days >= 30 }">
+      <div class="reward-item" :class="{ active: (checkinStatus?.consecutive_day || 0) >= 30 }">
         <span class="reward-day">30天</span>
         <span class="reward-icon">🎁</span>
         <span class="reward-exp">+500 EXP</span>

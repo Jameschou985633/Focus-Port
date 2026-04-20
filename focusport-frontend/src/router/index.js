@@ -9,6 +9,12 @@ const routes = [
   },
   {
     path: '/',
+    name: 'FocusHubHome',
+    component: () => import('../components/FocusHubPage.vue'),
+    meta: { title: '自律中枢', requiresAuth: true }
+  },
+  {
+    path: '/island',
     name: 'Island',
     component: () => import('../components/CityDimensionShell.vue'),
     meta: { title: '星港基地', requiresAuth: true }
@@ -29,7 +35,7 @@ const routes = [
     path: '/vault',
     name: 'BlueprintVault',
     component: () => import('../components/BlueprintVaultPage.vue'),
-    meta: { title: '全息蓝图库', requiresAuth: true }
+    meta: { title: '工程装备仓', requiresAuth: true }
   },
   {
     path: '/backpack',
@@ -43,9 +49,7 @@ const routes = [
   },
   {
     path: '/focus-hub',
-    name: 'FocusHub',
-    component: () => import('../components/FocusHubPage.vue'),
-    meta: { title: '自律中枢', requiresAuth: true }
+    redirect: '/'
   },
   {
     path: '/leaderboard',
@@ -112,10 +116,76 @@ const routes = [
     meta: { title: '联合星桥枢纽 · FLEET NEXUS', requiresAuth: true }
   },
   {
+    path: '/playground',
+    name: 'Playground',
+    component: () => import('../components/PlaygroundPage.vue'),
+    meta: { title: '游乐场', requiresAuth: true }
+  },
+  {
+    path: '/playground/gomoku/online/:roomCode',
+    name: 'GomokuOnline',
+    component: () => import('../components/GomokuRoom.vue'),
+    meta: { title: '五子棋', requiresAuth: true }
+  },
+  {
+    path: '/playground/gomoku/:id',
+    name: 'GomokuRoom',
+    component: () => import('../components/GomokuRoom.vue'),
+    meta: { title: '五子棋', requiresAuth: true }
+  },
+  {
+    path: '/playground/gomoku-solo',
+    name: 'GomokuSolo',
+    component: () => import('../components/GomokuRoom.vue'),
+    meta: { title: '五子棋', requiresAuth: true }
+  },
+  {
+    path: '/playground/tictactoe',
+    name: 'TicTacToe',
+    component: () => import('../components/TicTacToeGame.vue'),
+    meta: { title: '井字棋', requiresAuth: true }
+  },
+  {
+    path: '/playground/tictactoe/online/:roomCode',
+    name: 'TicTacToeOnline',
+    component: () => import('../components/TicTacToeGame.vue'),
+    meta: { title: '井字棋', requiresAuth: true }
+  },
+  {
+    path: '/playground/connect-four',
+    name: 'ConnectFour',
+    component: () => import('../components/ConnectFourGame.vue'),
+    meta: { title: '四子棋', requiresAuth: true }
+  },
+  {
+    path: '/playground/connect-four/online/:roomCode',
+    name: 'ConnectFourOnline',
+    component: () => import('../components/ConnectFourGame.vue'),
+    meta: { title: '四子棋', requiresAuth: true }
+  },
+  {
+    path: '/playground/reversi',
+    name: 'Reversi',
+    component: () => import('../components/ReversiGame.vue'),
+    meta: { title: '黑白棋', requiresAuth: true }
+  },
+  {
+    path: '/playground/reversi/online/:roomCode',
+    name: 'ReversiOnline',
+    component: () => import('../components/ReversiGame.vue'),
+    meta: { title: '黑白棋', requiresAuth: true }
+  },
+  {
     path: '/more',
     name: 'More',
     component: () => import('../components/MorePage.vue'),
     meta: { title: '舰桥中控', requiresAuth: true }
+  },
+  {
+    path: '/mail',
+    name: 'Mail',
+    component: () => import('../components/MailPage.vue'),
+    meta: { title: '星际信箱', requiresAuth: true }
   },
   {
     path: '/admin',

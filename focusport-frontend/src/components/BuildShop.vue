@@ -1,8 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
-import { shopApi, inventoryApi, infrastructureApi } from '../api'
+import { shopApi, inventoryApi, infrastructureApi, focusEnergyApi } from '../api'
 
 const router = useRouter()
 const username = ref(localStorage.getItem('username') || 'guest')
@@ -29,7 +28,7 @@ const isInInventory = (itemId) => {
 // 加载用户专注能量
 const loadUserEnergy = async () => {
   try {
-    const res = await axios.get(`http://127.0.0.1:8000/api/focus-energy/${username.value}`)
+    const res = await focusEnergyApi.get(username.value)
     userEnergy.value = res.data.focus_energy || 0
   } catch (error) {
     console.error('加载能量失败:', error)

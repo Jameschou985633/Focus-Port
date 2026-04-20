@@ -2,11 +2,10 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
-import axios from 'axios'
+import { pkApi } from '../api'
 
 const router = useRouter()
 const userStore = useUserStore()
-const API_BASE = 'http://127.0.0.1:8000'
 
 const activePKs = ref([])
 const pendingInvites = ref([])
@@ -31,7 +30,7 @@ const pkTypes = [
 const loadPKData = async () => {
   isLoading.value = true
   try {
-    const res = await axios.get(`${API_BASE}/api/pk/active/${userStore.username}`)
+    const res = await pkApi.active(userStore.username)
     activePKs.value = res.data.active || []
     pendingInvites.value = res.data.pending || []
     pkHistory.value = res.data.history || []
@@ -49,13 +48,13 @@ const createPK = async () => {
   }
 
   try {
-    const res = await axios.post(`${API_BASE}/api/pk/create`, {
-      creator: userStore.username,
-      opponent: newPK.value.opponent,
-      type: newPK.value.type,
-      duration: newPK.value.duration,
-      target_value: newPK.value.target_value
-    })
+    await pkApi.create(
+      userStore.username,
+      newPK.value.opponent,
+      newPK.value.type,
+      newPK.value.duration,
+      newPK.value.target_value
+    )
     alert('PK挑战已发送！')
     showCreateModal.value = false
     newPK.value = { type: 'focus', duration: 25, target_value: 60, opponent: '' }
@@ -67,10 +66,7 @@ const createPK = async () => {
 
 const acceptPK = async (pkId) => {
   try {
-    await axios.post(`${API_BASE}/api/pk/accept`, {
-      pk_id: pkId,
-      username: userStore.username
-    })
+    await pkApi.accept(pkId, userStore.username)
     alert('已接受挑战！开始PK吧！')
     await loadPKData()
   } catch (error) {
@@ -80,10 +76,7 @@ const acceptPK = async (pkId) => {
 
 const declinePK = async (pkId) => {
   try {
-    await axios.post(`${API_BASE}/api/pk/decline`, {
-      pk_id: pkId,
-      username: userStore.username
-    })
+    await pkApi.decline(pkId, userStore.username)
     await loadPKData()
   } catch (error) {
     console.error('拒绝失败:', error)

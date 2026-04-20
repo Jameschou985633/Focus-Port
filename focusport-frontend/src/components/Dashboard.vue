@@ -93,8 +93,8 @@ onMounted(() => {
         <h3>📈 专注时长趋势</h3>
         <div class="chart-placeholder">
           <div class="simple-chart">
-            <div v-for="(day, index) in dailyData" :key="index" class="chart-bar" :style="{ height: (day.focus_minutes / 60 / 2 * 100) + '%' }">
-              <span class="bar-label">{{ day.focus_minutes }}分钟</span>
+            <div v-for="(day, index) in dailyData" :key="index" class="chart-bar" :style="{ height: ((day.focus_minutes || 0) / 60 / 2 * 100) + '%' }">
+              <span class="bar-label">{{ day.focus_minutes || 0 }}分钟</span>
             </div>
           </div>
         </div>
@@ -118,8 +118,8 @@ onMounted(() => {
         <div class="daily-grid">
           <div v-for="(day, index) in dailyData" :key="index" class="day-cell">
             <div class="day-label">{{ day.stat_date?.slice(5) || '-' }}</div>
-            <div class="day-intensity" :style="{ opacity: Math.min(1, day.focus_minutes / 120) }"></div>
-            <div class="day-value">{{ Math.round(day.focus_minutes / 60 * 10) / 10 }}h</div>
+            <div class="day-intensity" :style="{ opacity: Math.min(1, (day.focus_minutes || 0) / 120) }"></div>
+            <div class="day-value">{{ Math.round((day.focus_minutes || 0) / 60 * 10) / 10 }}h</div>
           </div>
         </div>
       </div>

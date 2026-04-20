@@ -32,8 +32,20 @@ const removeStage = (index) => {
 const loadPlans = async () => {
   isLoading.value = true
   try {
-    const res = await planApi.get(userStore.username)
-    plans.value = res.data.plans || []
+    const res = await planApi.list(userStore.username)
+    const planList = res.data.plans || []
+    // Load details for each plan to get stages
+    const detailed = await Promise.all(
+      planList.map(async (p) => {
+        try {
+          const detail = await planApi.detail(p.id)
+          return detail.data.plan || p
+        } catch {
+          return p
+        }
+      })
+    )
+    plans.value = detailed
   } catch (error) {
     console.error('加载计划失败:', error)
   } finally {
@@ -66,16 +78,26 @@ const createPlan = async () => {
 
 const toggleStage = async (planId, stageId, completed) => {
   try {
-    await planApi.updateProgress(planId, stageId, !completed)
+    await planApi.updateStage(planId, stageId, { status: completed ? 'pending' : 'completed' })
     await loadPlans()
   } catch (error) {
     console.error('更新进度失败:', error)
   }
 }
 
+const deletePlan = async (planId) => {
+  if (!confirm('确定要删除这个计划吗？')) return
+  try {
+    await planApi.delete(planId, userStore.username)
+    await loadPlans()
+  } catch (error) {
+    alert('删除失败: ' + (error.response?.data?.detail || error.message))
+  }
+}
+
 const getProgressPercent = (plan) => {
   if (!plan.stages || plan.stages.length === 0) return 0
-  const completed = plan.stages.filter(s => s.completed).length
+  const completed = plan.stages.filter(s => s.status === 'completed').length
   return Math.round(completed / plan.stages.length * 100)
 }
 
@@ -96,7 +118,10 @@ onMounted(() => loadPlans())
       <div v-for="plan in plans" :key="plan.id" class="plan-card">
         <div class="plan-header-row">
           <h3 class="plan-title">{{ plan.title }}</h3>
-          <span :class="['plan-status', plan.status]">{{ plan.status }}</span>
+          <div class="plan-actions">
+            <span :class="['plan-status', plan.status]">{{ plan.status }}</span>
+            <button class="delete-plan-btn" @click="deletePlan(plan.id)">🗑️</button>
+          </div>
         </div>
 
         <p class="plan-desc" v-if="plan.description">{{ plan.description }}</p>
@@ -115,13 +140,13 @@ onMounted(() => loadPlans())
           <div
             v-for="stage in plan.stages"
             :key="stage.id"
-            :class="['stage-item', { completed: stage.completed }]"
+            :class="['stage-item', { completed: stage.status === 'completed' }]"
           >
             <button
               class="stage-check"
-              @click="toggleStage(plan.id, stage.id, stage.completed)"
+              @click="toggleStage(plan.id, stage.id, stage.status === 'completed')"
             >
-              {{ stage.completed ? '✅' : '⬜' }}
+              {{ stage.status === 'completed' ? '✅' : '⬜' }}
             </button>
             <div class="stage-info">
               <span class="stage-title">{{ stage.title }}</span>
@@ -256,6 +281,22 @@ h1 { margin: 0; font-size: 24px; }
 .plan-status.active { background: rgba(74, 222, 128, 0.25); color: #4ade80; }
 .plan-status.completed { background: rgba(59, 130, 246, 0.25); color: #60a5fa; }
 .plan-status.paused { background: rgba(251, 191, 36, 0.25); color: #fbbf24; }
+
+.plan-actions { display: flex; align-items: center; gap: 8px; }
+
+.delete-plan-btn {
+  background: rgba(248, 113, 113, 0.15);
+  border: none;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.plan-card:hover .delete-plan-btn { opacity: 1; }
+.delete-plan-btn:hover { background: rgba(248, 113, 113, 0.3); }
 
 .plan-desc {
   color: rgba(255, 255, 255, 0.7);

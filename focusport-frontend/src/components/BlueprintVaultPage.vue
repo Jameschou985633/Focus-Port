@@ -136,7 +136,7 @@ onMounted(async () => {
         <div class="empty-icon">📭</div>
         <h3>当前分舱还没有资产</h3>
         <p>前往物质交换港获取建筑与装饰</p>
-        <SpaceButton variant="primary" @click="openShop">前往交换港</SpaceButton>
+        <SpaceButton variant="primary" @click="openShop">前往物质交换港</SpaceButton>
       </div>
 
       <div v-if="inventoryStore.isPlacing" class="placement-notice">

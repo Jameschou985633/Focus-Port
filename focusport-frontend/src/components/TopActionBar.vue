@@ -1,119 +1,277 @@
 <script setup>
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useUserStore } from '../stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
+const rootRef = ref(null)
+const beaconOpen = ref(false)
+const avatarOpen = ref(false)
 
-const menuItems = [
-  { id: 'shop', icon: '🛒', label: '物质交换港', route: '/shop' },
-  { id: 'vault', icon: '📦', label: '全息蓝图库', route: '/vault' },
-  { id: 'collab', icon: '🤝', label: '舰队枢纽', route: '/collab' },
-  { id: 'exam', icon: '📝', label: '协议编译站', route: '/exam' },
-  { id: 'stats', icon: '📊', label: '数据档案', route: '/stats' },
-  { id: 'more', icon: '⚙️', label: '更多功能', route: '/more' }
+const beaconItems = [
+  { id: 'friend', label: '好友请求', dot: true },
+  { id: 'system', label: '系统通知', dot: true },
+  { id: 'collab', label: '联机邀请', dot: false },
+  { id: 'event', label: '活动提醒', dot: false }
 ]
 
-const handleNav = (route) => {
-  if (route) router.push(route)
+const unreadCount = computed(() => beaconItems.filter((item) => item.dot).length)
+const username = computed(() => userStore.username || 'guest')
+const avatarText = computed(() => (username.value?.[0] || 'G').toUpperCase())
+
+const closeAll = () => {
+  beaconOpen.value = false
+  avatarOpen.value = false
 }
+
+const toggleBeacon = () => {
+  beaconOpen.value = !beaconOpen.value
+  if (beaconOpen.value) avatarOpen.value = false
+}
+
+const toggleAvatar = () => {
+  avatarOpen.value = !avatarOpen.value
+  if (avatarOpen.value) beaconOpen.value = false
+}
+
+const logout = () => {
+  userStore.logout()
+  router.push('/login')
+}
+
+const handlePointerDown = (event) => {
+  if (!rootRef.value) return
+  if (!rootRef.value.contains(event.target)) closeAll()
+}
+
+const handleEsc = (event) => {
+  if (event.key === 'Escape') closeAll()
+}
+
+onMounted(() => {
+  window.addEventListener('pointerdown', handlePointerDown)
+  window.addEventListener('keydown', handleEsc)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('pointerdown', handlePointerDown)
+  window.removeEventListener('keydown', handleEsc)
+})
 </script>
 
 <template>
-  <nav class="top-action-bar">
-    <div class="bar-inner">
-      <button
-        v-for="item in menuItems"
-        :key="item.id"
-        type="button"
-        class="action-btn"
-        :title="item.label"
-        @click="handleNav(item.route)"
-      >
-        <span class="action-icon">{{ item.icon }}</span>
-        <span class="action-label">{{ item.label }}</span>
-      </button>
+  <header ref="rootRef" class="top-action-bar">
+    <button type="button" class="logo-btn" @click="router.push('/')">FocusPort</button>
+
+    <div class="right-controls">
+      <div class="dropdown-wrap">
+        <button type="button" class="icon-btn" aria-label="星港信标" @click="toggleBeacon">
+          🔔
+          <span v-if="unreadCount > 0" class="unread">{{ unreadCount }}</span>
+        </button>
+        <transition name="drop">
+          <div v-if="beaconOpen" class="dropdown-panel">
+            <p class="panel-title">星港信标 Beacon</p>
+            <button v-for="item in beaconItems" :key="item.id" type="button" class="panel-item">
+              <span>{{ item.label }}</span>
+              <em v-if="item.dot">●</em>
+            </button>
+            <button type="button" class="panel-link" @click="router.push('/more')">查看全部</button>
+          </div>
+        </transition>
+      </div>
+
+      <div class="dropdown-wrap">
+        <button type="button" class="avatar-btn" aria-label="个人中心" @click="toggleAvatar">
+          <span class="avatar">{{ avatarText }}</span>
+          <span class="name">{{ username }}</span>
+        </button>
+        <transition name="drop">
+          <div v-if="avatarOpen" class="dropdown-panel">
+            <button type="button" class="panel-item" @click="router.push('/more')">个人资料</button>
+            <button type="button" class="panel-item" @click="router.push('/more')">账号设置</button>
+            <button type="button" class="panel-item" @click="router.push('/more')">通知设置</button>
+            <button type="button" class="panel-item danger" @click="logout">退出登录</button>
+          </div>
+        </transition>
+      </div>
     </div>
-  </nav>
+  </header>
 </template>
 
 <style scoped>
 .top-action-bar {
   position: fixed;
-  bottom: 22px;
+  top: 12px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
-  pointer-events: auto;
-}
-
-.bar-inner {
+  width: min(1180px, calc(100vw - 24px));
+  min-height: 54px;
+  border-radius: 16px;
+  border: 1px solid rgba(118, 188, 255, 0.26);
+  background: rgba(9, 23, 48, 0.8);
+  box-shadow: 0 16px 30px rgba(3, 9, 20, 0.4);
+  backdrop-filter: blur(14px);
   display: flex;
-  gap: 8px;
-  padding: 10px 16px;
-  background: linear-gradient(180deg, rgba(16, 34, 74, 0.92), rgba(8, 16, 36, 0.95));
-  border: 1.5px solid rgba(129, 214, 255, 0.34);
-  border-radius: 20px;
-  box-shadow: 0 12px 40px rgba(4, 8, 22, 0.5);
-  backdrop-filter: blur(18px);
-}
-
-.action-btn {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(115, 224, 255, 0.12);
-  border-radius: 12px;
-  color: #dbeeff;
+  justify-content: space-between;
+  padding: 8px 12px;
+}
+
+.logo-btn {
+  border: 0;
+  background: transparent;
+  color: #9fd0ff;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  transition: all 0.2s ease;
-  min-width: 64px;
 }
 
-.action-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(115, 224, 255, 0.35);
-  box-shadow: 0 0 16px rgba(72, 183, 255, 0.2);
+.right-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.action-btn:active {
-  transform: scale(0.96);
+.dropdown-wrap {
+  position: relative;
 }
 
-.action-icon {
-  font-size: 20px;
-  line-height: 1;
+.icon-btn,
+.avatar-btn {
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(126, 185, 255, 0.35);
+  background: rgba(20, 40, 73, 0.8);
+  color: #d8ecff;
+  cursor: pointer;
 }
 
-.action-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  color: rgba(222, 240, 255, 0.8);
+.icon-btn {
+  position: relative;
+  min-width: 38px;
+}
+
+.unread {
+  position: absolute;
+  top: -7px;
+  right: -6px;
+  min-width: 18px;
+  min-height: 18px;
+  border-radius: 999px;
+  background: #1f9fff;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
   text-align: center;
-  white-space: nowrap;
+  box-shadow: 0 0 14px rgba(31, 159, 255, 0.5);
+}
+
+.avatar-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 8px;
+}
+
+.avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  background: rgba(50, 118, 222, 0.5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.name {
+  font-size: 12px;
+}
+
+.dropdown-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  width: 220px;
+  border-radius: 14px;
+  border: 1px solid rgba(126, 180, 255, 0.28);
+  background: rgba(8, 19, 38, 0.95);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 20px 32px rgba(5, 14, 30, 0.48);
+  padding: 10px;
+}
+
+.panel-title {
+  margin: 2px 6px 8px;
+  font-size: 12px;
+  color: #9fc9fb;
+}
+
+.panel-item,
+.panel-link {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #d8ecff;
+  text-align: left;
+  padding: 0 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-item:hover,
+.panel-link:hover {
+  background: rgba(65, 124, 220, 0.2);
+}
+
+.panel-item em {
+  font-style: normal;
+  color: #39b7ff;
+}
+
+.panel-link {
+  color: #96c1f6;
+}
+
+.panel-item.danger {
+  color: #ff9fb1;
+}
+
+.drop-enter-active,
+.drop-leave-active {
+  transition: all 200ms ease-out;
+}
+
+.drop-enter-from,
+.drop-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
 }
 
 @media (max-width: 768px) {
   .top-action-bar {
-    bottom: 12px;
-    width: calc(100vw - 24px);
+    width: calc(100vw - 14px);
+    top: 8px;
   }
 
-  .bar-inner {
-    width: 100%;
-    justify-content: space-around;
-    padding: 8px 10px;
+  .logo-btn {
+    font-size: 19px;
   }
 
-  .action-btn {
-    min-width: 0;
-    padding: 6px 8px;
-  }
-
-  .action-label {
-    font-size: 9px;
+  .name {
+    max-width: 58px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 </style>

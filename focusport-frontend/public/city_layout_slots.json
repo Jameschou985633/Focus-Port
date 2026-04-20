@@ -1,0 +1,41 @@
+{
+  "map_id": "city",
+  "surface_y": 1.7,
+  "slots": [
+    { "slot_id": "building-nw-1", "slot_type": "building", "x": -10.5, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-nw-2", "slot_type": "building", "x": -3.5, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-ne-1", "slot_type": "building", "x": 3.5, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-ne-2", "slot_type": "building", "x": 10.5, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-west-1", "slot_type": "building", "x": -10.5, "y": 1.7, "z": -3.5, "rotation_y": 90, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-east-1", "slot_type": "building", "x": 10.5, "y": 1.7, "z": -3.5, "rotation_y": 90, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-west-2", "slot_type": "building", "x": -10.5, "y": 1.7, "z": 3.5, "rotation_y": 90, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-east-2", "slot_type": "building", "x": 10.5, "y": 1.7, "z": 3.5, "rotation_y": 90, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-sw-1", "slot_type": "building", "x": -10.5, "y": 1.7, "z": 10.5, "rotation_y": 180, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-sw-2", "slot_type": "building", "x": -3.5, "y": 1.7, "z": 10.5, "rotation_y": 180, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-se-1", "slot_type": "building", "x": 3.5, "y": 1.7, "z": 10.5, "rotation_y": 180, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-se-2", "slot_type": "building", "x": 10.5, "y": 1.7, "z": 10.5, "rotation_y": 180, "footprint": 2.2, "enabled": true },
+
+    { "slot_id": "greenery-core-1", "slot_type": "greenery", "x": -3.5, "y": 1.7, "z": -3.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-core-2", "slot_type": "greenery", "x": 3.5, "y": 1.7, "z": -3.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-core-3", "slot_type": "greenery", "x": -3.5, "y": 1.7, "z": 3.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-core-4", "slot_type": "greenery", "x": 3.5, "y": 1.7, "z": 3.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-outer-1", "slot_type": "greenery", "x": -16.8, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-outer-2", "slot_type": "greenery", "x": 16.8, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-outer-3", "slot_type": "greenery", "x": -16.8, "y": 1.7, "z": 10.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-outer-4", "slot_type": "greenery", "x": 16.8, "y": 1.7, "z": 10.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+
+    { "slot_id": "building-north-west-outer", "slot_type": "building", "x": -17.5, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-north-center", "slot_type": "building", "x": 0.0, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-north-east-outer", "slot_type": "building", "x": 17.5, "y": 1.7, "z": -10.5, "rotation_y": 0, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-south-west-outer", "slot_type": "building", "x": -17.5, "y": 1.7, "z": 10.5, "rotation_y": 180, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-south-center", "slot_type": "building", "x": 0.0, "y": 1.7, "z": 10.5, "rotation_y": 180, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-south-east-outer", "slot_type": "building", "x": 17.5, "y": 1.7, "z": 10.5, "rotation_y": 180, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-west-center-outer", "slot_type": "building", "x": -17.5, "y": 1.7, "z": 0.0, "rotation_y": 90, "footprint": 2.2, "enabled": true },
+    { "slot_id": "building-east-center-outer", "slot_type": "building", "x": 17.5, "y": 1.7, "z": 0.0, "rotation_y": 90, "footprint": 2.2, "enabled": true },
+
+    { "slot_id": "greenery-axis-north", "slot_type": "greenery", "x": 0.0, "y": 1.7, "z": -3.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-axis-south", "slot_type": "greenery", "x": 0.0, "y": 1.7, "z": 3.5, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-axis-west", "slot_type": "greenery", "x": -3.5, "y": 1.7, "z": 0.0, "rotation_y": 0, "footprint": 1.8, "enabled": true },
+    { "slot_id": "greenery-axis-east", "slot_type": "greenery", "x": 3.5, "y": 1.7, "z": 0.0, "rotation_y": 0, "footprint": 1.8, "enabled": true }
+  ]
+}

@@ -24,11 +24,33 @@ const safeParseArray = (rawValue) => {
 }
 
 const normalizePlacementType = (value, category = '', subcategory = '') => {
-  if (value) return value
-  if (subcategory === 'vehicles') return 'vehicle'
+  const placement = String(value || '').trim().toLowerCase()
+  if ([
+    'building',
+    'buildings',
+    'structure',
+    'structures',
+    'vehicle',
+    'vehicles',
+    'path',
+    'paths',
+    'road',
+    'roads',
+    'platform',
+    'ground',
+    'fixed_scene',
+    'fixed-scene'
+  ].includes(placement)) {
+    return 'building'
+  }
+  if (['greenery', 'green', 'plant', 'plants', 'tree', 'trees', 'flora'].includes(placement)) {
+    return 'greenery'
+  }
+  if (subcategory === 'vehicles') return 'building'
   if (category === 'structures') return 'building'
-  if (category === 'vehicles') return 'vehicle'
-  if (['plants', 'trees'].includes(category)) return 'greenery'
+  if (category === 'vehicles') return 'building'
+  if (['plants', 'trees', 'greenery'].includes(category)) return 'greenery'
+  if (['paths', 'roads'].includes(category)) return 'building'
   return 'building'
 }
 

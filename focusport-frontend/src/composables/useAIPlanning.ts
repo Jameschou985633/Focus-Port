@@ -460,8 +460,18 @@ export const markRecommendedFirst = (steps: AITaskStep[]): AITaskStep[] => {
 }
 
 const requestViaProxy = async (input: GoalDecomposeInput, prompt: PlanningPrompt): Promise<unknown> => {
+  const username = String(localStorage.getItem('username') || 'guest').trim() || 'guest'
+  const message = input.goal || prompt.userPrompt
+
   const response = await withTimeout(
     api.post(PROXY_ENDPOINT, {
+      // Backward-compatible payload for existing backend schema
+      username,
+      message,
+      conversation_id: 'focushub_decompose',
+      plan_id: null,
+
+      // Extended fields for decomposition-aware backend
       goal: input.goal,
       style: input.style,
       available_minutes: input.availableMinutes,
@@ -588,4 +598,3 @@ export const useAIPlanning = (deps: Partial<PlanningDeps> = {}) => {
     generateDraftPlan
   }
 }
-

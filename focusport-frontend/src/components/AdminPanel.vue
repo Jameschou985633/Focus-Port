@@ -4,8 +4,7 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 const router = useRouter()
-const API_BASE = import.meta.env.VITE_API_BASE_URL
-  || (import.meta.env.PROD ? 'https://focusport-backend.onrender.com' : 'http://127.0.0.1:8000')
+const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://127.0.0.1:8000') })
 
 const isLoading = ref(false)
 const aiLoading = ref(false)
@@ -93,7 +92,7 @@ async function uploadResource() {
   formData.append('file', selectedFile.value)
 
   try {
-    const res = await axios.post(`${API_BASE}/api/admin/upload`, formData)
+    const res = await api.post('/api/admin/upload', formData)
     alert(res.data.message || '上传成功')
     selectedFile.value = null
     fileName.value = ''
@@ -159,7 +158,7 @@ async function callAIParser() {
   aiLoading.value = true
 
   try {
-    const res = await axios.post(`${API_BASE}/api/admin/parse_answers`, {
+    const res = await api.post('/api/admin/parse_answers', {
       api_key: apiKey.value,
       pdf_filename: pdfFile.value,
       target_exam: targetExam.value
@@ -208,7 +207,7 @@ async function saveExam() {
   })
 
   try {
-    const res = await axios.post(`${API_BASE}/api/admin/save_exam`, {
+    const res = await api.post('/api/admin/save_exam', {
       exam_code: examCode.value.trim(),
       title: examTitle.value.trim(),
       audio_file: audioFile.value.trim(),
@@ -227,7 +226,7 @@ async function saveExam() {
 
 async function loadExams() {
   try {
-    const res = await axios.get(`${API_BASE}/api/admin/exams`)
+    const res = await api.get('/api/admin/exams')
     exams.value = res.data.exams || []
   } catch (error) {
     console.error('加载考试列表失败:', error)
@@ -238,7 +237,7 @@ async function deleteExam(code) {
   if (!confirm(`确定要删除考试 ${code} 吗？`)) return
 
   try {
-    await axios.delete(`${API_BASE}/api/admin/exam/${code}`)
+    await api.delete(`/api/admin/exam/${code}`)
     await loadExams()
   } catch (error) {
     alert(error.response?.data?.detail || '删除失败')
@@ -248,9 +247,9 @@ async function deleteExam(code) {
 async function loadSubmissions() {
   try {
     const url = filterExamCode.value
-      ? `${API_BASE}/api/admin/submissions?exam_code=${filterExamCode.value}`
-      : `${API_BASE}/api/admin/submissions`
-    const res = await axios.get(url)
+      ? `/api/admin/submissions?exam_code=${filterExamCode.value}`
+      : '/api/admin/submissions'
+    const res = await api.get(url)
     submissions.value = res.data.submissions || []
   } catch (error) {
     console.error('加载提交记录失败:', error)
@@ -261,9 +260,9 @@ async function batchGrade() {
   isLoading.value = true
   try {
     const url = filterExamCode.value
-      ? `${API_BASE}/api/admin/batch_grade?exam_code=${filterExamCode.value}`
-      : `${API_BASE}/api/admin/batch_grade`
-    const res = await axios.post(url)
+      ? `/api/admin/batch_grade?exam_code=${filterExamCode.value}`
+      : '/api/admin/batch_grade'
+    const res = await api.post(url)
     alert(res.data.message || '批改完成')
     await loadSubmissions()
   } catch (error) {

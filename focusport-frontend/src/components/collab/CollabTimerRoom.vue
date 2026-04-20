@@ -132,8 +132,12 @@ const connectWebSocket = () => {
   }
 
   ws.value.onmessage = (event) => {
-    const data = JSON.parse(event.data)
-    handleWebSocketMessage(data)
+    try {
+      const data = JSON.parse(event.data)
+      handleWebSocketMessage(data)
+    } catch (e) {
+      console.error('WebSocket message parse error:', e)
+    }
   }
 
   ws.value.onclose = () => {

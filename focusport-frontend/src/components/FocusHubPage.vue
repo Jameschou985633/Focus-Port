@@ -1,1444 +1,1806 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { addDays, differenceInCalendarDays, format, startOfWeek } from 'date-fns'
+import axios from 'axios'
+import { focusApi, taskApi } from '../api'
 import { useUserStore } from '../stores/user'
 import { useFocusHubStore } from '../stores/focusHub'
-import P0PilotPanel from './P0PilotPanel.vue'
+import { useDimensionStore } from '../stores/dimension'
+import { useMailStore } from '../stores/mail'
 
 const router = useRouter()
 const userStore = useUserStore()
 const focusHubStore = useFocusHubStore()
+const dimensionStore = useDimensionStore()
+const mailStore = useMailStore()
 
-const isMacroOpen = ref(false)
-const showArchive = ref(false)
-const newTaskTitle = ref('')
-const countdownTitle = ref('')
-const countdownDate = ref('')
-const showHubSettlement = ref(false)
-const hubSessionLog = ref('')
-const isHubSettling = ref(false)
-const enableP0Pilot = import.meta.env.VITE_ENABLE_P0_PILOT === 'true'
+const durationOptions = [15, 25, 45]
+const selectedDuration = ref(25)
+const isActionHydrating = ref(true)
+const isStartingFocus = ref(false)
+const isTaskLoading = ref(false)
+const isTaskSubmitting = ref(false)
+const taskError = ref('')
+const initError = ref('')
 
-const durationOptions = [15, 25, 30, 45, 60]
+const todoTasks = ref([])
+const selectedTodoTaskId = ref('')
+const activeFocusTodoId = ref('')
+const selectedDateKey = ref('')
+const monthCursor = ref(new Date())
+const taskModalOpen = ref(false)
 
-const formattedTimer = computed(() => {
+const userAvatar = ref('')
+const userNickname = ref('')
+
+const taskForm = ref({
+  content: '',
+  scheduledDate: '',
+  scheduledTime: '10:00',
+  category: 'FocusPort',
+  accent: '#4880FF'
+})
+
+const accentOptions = ['#4880FF', '#7551E9', '#E951BF', '#FF9E58', '#00B69B']
+const dateKeyPattern = /^\d{4}-\d{2}-\d{2}$/
+const weekdayLabels = ['MON', 'TUE', 'WED', 'THE', 'FRI', 'SAT', 'SUN']
+
+const toDateKey = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const todayDateKey = () => toDateKey(new Date())
+
+const normalizeDateKey = (value, fallback = todayDateKey()) => {
+  const raw = String(value || '').trim()
+  if (dateKeyPattern.test(raw)) return raw
+  const prefix = raw.slice(0, 10)
+  if (dateKeyPattern.test(prefix)) return prefix
+  return fallback
+}
+
+const username = computed(() => userStore.username || 'guest')
+const mailUnread = computed(() => Math.max(0, Number(mailStore.unreadCount || 0)))
+const isFocusMode = computed(() => focusHubStore.pomodoro.isRunning)
+
+const displayName = computed(() => {
+  const nickname = String(userNickname.value || '').trim()
+  return nickname || username.value
+})
+
+const avatarToken = computed(() => {
+  const raw = String(userAvatar.value || '').trim()
+  if (raw) return raw
+  return (username.value?.[0] || 'F').toUpperCase()
+})
+
+const avatarIsImage = computed(() => {
+  const value = avatarToken.value
+  return value.startsWith('http://') || value.startsWith('https://') || value.startsWith('data:image')
+})
+
+const formattedRemaining = computed(() => {
   const total = Math.max(0, Number(focusHubStore.pomodoro.remainingSeconds) || 0)
-  const minutes = Math.floor(total / 60)
-  const seconds = total % 60
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  const mm = String(Math.floor(total / 60)).padStart(2, '0')
+  const ss = String(total % 60).padStart(2, '0')
+  return `${mm}:${ss}`
 })
 
-const phaseLabel = computed(() => (
-  focusHubStore.pomodoro.mode === 'break' ? 'Recovery Window' : 'Focus Session'
-))
-
-const phaseDescription = computed(() => (
-  focusHubStore.pomodoro.mode === 'break'
-    ? `${focusHubStore.pomodoro.breakMinutes} min tactical reset`
-    : `${focusHubStore.pomodoro.focusMinutes} min deep work loop`
-))
-
-const totalPhaseSeconds = computed(() => (
-  focusHubStore.pomodoro.mode === 'break'
-    ? focusHubStore.pomodoro.breakMinutes * 60
-    : focusHubStore.pomodoro.focusMinutes * 60
-))
-
-const progressRatio = computed(() => {
-  if (!totalPhaseSeconds.value) return 0
-  return Math.min(1, Math.max(0, 1 - (focusHubStore.pomodoro.remainingSeconds / totalPhaseSeconds.value)))
+const safeTotalSeconds = computed(() => Math.max(60, Number(focusHubStore.pomodoro.focusMinutes || selectedDuration.value || 25) * 60))
+const safeRemainingSeconds = computed(() => Math.max(0, Number(focusHubStore.pomodoro.remainingSeconds || 0)))
+const progressPercent = computed(() => {
+  const elapsed = 1 - Math.min(1, safeRemainingSeconds.value / safeTotalSeconds.value)
+  return Math.round(elapsed * 100)
 })
 
-const circleCircumference = 2 * Math.PI * 92
-const circleOffset = computed(() => circleCircumference * (1 - progressRatio.value))
+const ringRadius = 34
+const ringCircumference = 2 * Math.PI * ringRadius
+const ringOffset = computed(() => ringCircumference * (1 - Math.min(1, Math.max(0, safeRemainingSeconds.value / safeTotalSeconds.value))))
 
-const completedTasks = computed(() => focusHubStore.completedTaskCount)
-const totalTasks = computed(() => focusHubStore.todayTasks.length)
+const normalizeTask = (task = {}) => {
+  const isCompleted = Boolean(task.isCompleted ?? task.is_completed)
+  const scheduledDate = normalizeDateKey(task.scheduledDate || task.scheduled_date || task.createdAt || task.created_at)
+  const status = isCompleted ? 'done' : ['in_progress', 'todo'].includes(task.status) ? task.status : 'todo'
+  return {
+    id: Number(task.id),
+    title: String(task.title || task.content || '').trim(),
+    isCompleted,
+    status,
+    scheduledDate,
+    scheduledTime: String(task.scheduledTime || task.scheduled_time || '').slice(0, 5),
+    category: String(task.category || '').trim() || 'FocusPort',
+    accent: /^#[0-9a-f]{6}$/i.test(String(task.accent || '')) ? task.accent : '#4880FF',
+    createdAt: String(task.createdAt || task.created_at || '')
+  }
+}
 
-const weekDays = computed(() => {
-  const start = startOfWeek(new Date(), { weekStartsOn: 1 })
-  const today = format(new Date(), 'yyyy-MM-dd')
+const selectedTodoTask = computed(() => (
+  todoTasks.value.find((task) => String(task.id) === String(selectedTodoTaskId.value)) || null
+))
 
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = addDays(start, index)
-    const dateKey = format(date, 'yyyy-MM-dd')
+const selectedTaskIsDone = computed(() => Boolean(selectedTodoTask.value?.isCompleted || selectedTodoTask.value?.status === 'done'))
+
+const visibleTasks = computed(() => (
+  todoTasks.value.filter((task) => task.scheduledDate === selectedDateKey.value)
+))
+
+const tasksByDate = computed(() => {
+  const map = new Map()
+  todoTasks.value.forEach((task) => {
+    if (!map.has(task.scheduledDate)) map.set(task.scheduledDate, [])
+    map.get(task.scheduledDate).push(task)
+  })
+  return map
+})
+
+const monthTitle = computed(() => (
+  new Intl.DateTimeFormat('zh-CN', { month: 'long' }).format(monthCursor.value)
+))
+
+const calendarCells = computed(() => {
+  const y = monthCursor.value.getFullYear()
+  const m = monthCursor.value.getMonth()
+  const firstDay = new Date(y, m, 1)
+  const mondayIndex = (firstDay.getDay() + 6) % 7
+  const gridStart = new Date(y, m, 1 - mondayIndex)
+  const today = todayDateKey()
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const current = new Date(gridStart)
+    current.setDate(gridStart.getDate() + index)
+    const dateKey = toDateKey(current)
     return {
       dateKey,
-      label: format(date, 'EEE'),
-      dayNumber: format(date, 'dd'),
-      monthLabel: format(date, 'MM'),
+      day: current.getDate(),
+      inMonth: current.getMonth() === m,
       isToday: dateKey === today,
-      notes: focusHubStore.getNotesForDate(dateKey)
+      isSelected: dateKey === selectedDateKey.value,
+      tasks: tasksByDate.value.get(dateKey) || []
     }
   })
 })
 
-const countdownCards = computed(() => (
-  [...focusHubStore.countdowns].sort((left, right) => String(left.targetDate).localeCompare(String(right.targetDate)))
+const focusActionDisabled = computed(() => (
+  !focusHubStore.pomodoro.isRunning &&
+  (isStartingFocus.value || isTaskLoading.value || !selectedTodoTask.value || selectedTaskIsDone.value)
 ))
 
-const goBack = () => {
-  router.push('/more')
-}
-
-const submitTask = () => {
-  if (focusHubStore.addTask(newTaskTitle.value)) {
-    newTaskTitle.value = ''
-  }
-}
-
-const submitCountdown = () => {
-  if (focusHubStore.addCountdown(countdownTitle.value, countdownDate.value)) {
-    countdownTitle.value = ''
-    countdownDate.value = ''
-  }
-}
-
-const handleWeekNoteChange = (dateKey, noteIndex, event) => {
-  focusHubStore.updateWeekNote(dateKey, noteIndex, event.target.value)
-}
-
-const countdownStatus = (targetDate) => {
-  const delta = differenceInCalendarDays(new Date(targetDate), new Date())
-  if (delta > 0) return `D-${delta}`
-  if (delta === 0) return 'Today'
-  return `已过 ${Math.abs(delta)} 天`
-}
-
-const countdownTone = (targetDate) => {
-  const delta = differenceInCalendarDays(new Date(targetDate), new Date())
-  if (delta < 0) return 'expired'
-  if (delta === 0) return 'today'
-  if (delta <= 3) return 'warning'
-  return 'normal'
-}
-
-onMounted(() => {
-  focusHubStore.hydrate(userStore.username)
+const focusActionLabel = computed(() => {
+  if (isStartingFocus.value) return '启动中'
+  if (focusHubStore.pomodoro.isRunning) return '暂停专注'
+  return '开始专注'
 })
 
-watch(() => focusHubStore.pomodoro.pendingSettlement, (pending) => {
-  if (pending) {
-    showHubSettlement.value = true
-    hubSessionLog.value = ''
-  }
-})
+const focusSubject = computed(() => selectedTodoTask.value?.title || 'Focus Session')
+const focusGoalTitle = computed(() => selectedTodoTask.value?.category || 'Today Focus')
+const focusActionTitle = computed(() => selectedTodoTask.value?.title || '请选择一个待办任务')
+const showFocusGoal = computed(() => Boolean(focusGoalTitle.value && focusGoalTitle.value !== focusActionTitle.value))
 
-const submitHubSettlement = async () => {
-  if (isHubSettling.value) return
-  isHubSettling.value = true
+const selectFallbackTask = () => {
+  const currentExists = todoTasks.value.some((task) => String(task.id) === String(selectedTodoTaskId.value))
+  if (currentExists) return
+  const sameDay = visibleTasks.value.find((task) => !task.isCompleted) || visibleTasks.value[0]
+  const fallback = sameDay || todoTasks.value.find((task) => !task.isCompleted) || todoTasks.value[0]
+  selectedTodoTaskId.value = fallback ? String(fallback.id) : ''
+}
+
+const goProfile = () => router.push('/more')
+const goMail = () => router.push('/mail')
+const goHome = () => router.push('/')
+const goDashboard = () => router.push('/dashboard')
+const goShop = () => router.push('/shop')
+const goVault = () => router.push('/vault')
+const goStats = () => router.push('/stats')
+const goFriends = () => router.push('/friends')
+const goPlayground = () => router.push('/playground')
+
+const enter2DCity = () => {
+  dimensionStore.setDimension('GAIA')
+  router.push({ path: '/island', query: { dimension: 'GAIA' } })
+}
+
+const logout = () => {
+  userStore.logout()
+  router.push('/login')
+}
+
+const loadAvatarProfile = async () => {
+  const currentUser = String(userStore.username || '').trim()
+  if (!currentUser || currentUser === 'guest') {
+    userAvatar.value = ''
+    userNickname.value = ''
+    return
+  }
+
   try {
-    await focusHubStore.completeFocusSession({
-      username: userStore.username,
-      duration: focusHubStore.pomodoro.focusMinutes,
-      subject: '自律中枢番茄钟',
-      sessionLog: hubSessionLog.value,
-      taskDifficulty: focusHubStore.pomodoro.taskDifficulty
-    })
-    focusHubStore.resolveFocusCompletion()
-    showHubSettlement.value = false
-  } catch (error) {
-    console.error('Hub settlement failed', error)
-    window.alert('结算失败，请稍后再试。')
-  } finally {
-    isHubSettling.value = false
+    const response = await axios.get(`/api/user/${currentUser}/avatar`)
+    const payload = response?.data || {}
+    userAvatar.value = String(payload.avatar || userStore.avatar || '')
+    userNickname.value = String(payload.nickname || '')
+  } catch {
+    userAvatar.value = String(userStore.avatar || '')
+    userNickname.value = ''
   }
 }
 
-const skipHubSettlement = () => {
-  focusHubStore.skipSettlement()
-  showHubSettlement.value = false
+const loadTodoTasks = async () => {
+  isTaskLoading.value = true
+  taskError.value = ''
+  try {
+    const response = await taskApi.list(username.value)
+    todoTasks.value = (response.data?.tasks || [])
+      .map(normalizeTask)
+      .filter((task) => task.id && task.title)
+    selectFallbackTask()
+  } catch (error) {
+    console.error('Failed to load todo tasks', error)
+    taskError.value = '任务同步失败，请稍后重试。'
+  } finally {
+    isTaskLoading.value = false
+  }
 }
+
+const openTaskModal = () => {
+  taskForm.value = {
+    content: '',
+    scheduledDate: selectedDateKey.value || todayDateKey(),
+    scheduledTime: '10:00',
+    category: 'FocusPort',
+    accent: '#4880FF'
+  }
+  taskError.value = ''
+  taskModalOpen.value = true
+}
+
+const closeTaskModal = () => {
+  taskModalOpen.value = false
+}
+
+const createTodoTask = async () => {
+  const content = String(taskForm.value.content || '').trim()
+  const scheduledDate = normalizeDateKey(taskForm.value.scheduledDate, selectedDateKey.value || todayDateKey())
+  if (!content) {
+    taskError.value = '请输入任务内容。'
+    return
+  }
+
+  isTaskSubmitting.value = true
+  taskError.value = ''
+  try {
+    const response = await taskApi.add(username.value, content, {
+      scheduledDate,
+      scheduledTime: taskForm.value.scheduledTime || '',
+      status: 'todo',
+      category: taskForm.value.category || '',
+      accent: taskForm.value.accent || '#4880FF'
+    })
+    const created = normalizeTask(response.data?.task || {
+      id: response.data?.task_id,
+      content,
+      scheduled_date: scheduledDate,
+      scheduled_time: taskForm.value.scheduledTime,
+      category: taskForm.value.category,
+      accent: taskForm.value.accent
+    })
+    todoTasks.value = [created, ...todoTasks.value.filter((task) => task.id !== created.id)]
+    selectedDateKey.value = created.scheduledDate
+    selectedTodoTaskId.value = String(created.id)
+    closeTaskModal()
+  } catch (error) {
+    console.error('Failed to create todo task', error)
+    taskError.value = error.response?.data?.detail || '任务创建失败。'
+  } finally {
+    isTaskSubmitting.value = false
+  }
+}
+
+const selectDate = (dateKey) => {
+  selectedDateKey.value = normalizeDateKey(dateKey)
+  selectedTodoTaskId.value = ''
+  selectFallbackTask()
+}
+
+const selectToday = () => {
+  selectDate(todayDateKey())
+  monthCursor.value = new Date()
+}
+
+const shiftMonth = (delta) => {
+  const next = new Date(monthCursor.value)
+  next.setMonth(monthCursor.value.getMonth() + delta)
+  monthCursor.value = new Date(next.getFullYear(), next.getMonth(), 1)
+}
+
+const selectTask = (task) => {
+  selectedTodoTaskId.value = String(task.id)
+  selectedDateKey.value = task.scheduledDate
+}
+
+const handleDurationSelect = (minutes) => {
+  if (focusHubStore.pomodoro.isRunning || isStartingFocus.value) return
+  selectedDuration.value = Number(minutes)
+}
+
+const handleStartFocus = async () => {
+  if (focusActionDisabled.value) return
+  isStartingFocus.value = true
+  try {
+    if (focusHubStore.pomodoro.pendingSettlement) {
+      focusHubStore.skipSettlement()
+    }
+    activeFocusTodoId.value = String(selectedTodoTaskId.value || '')
+    focusHubStore.startPomodoro()
+    await new Promise((resolve) => window.setTimeout(resolve, 240))
+  } finally {
+    isStartingFocus.value = false
+  }
+}
+
+const handleToggleFocus = () => {
+  if (focusHubStore.pomodoro.isRunning) {
+    focusHubStore.pausePomodoro()
+    return
+  }
+  handleStartFocus()
+}
+
+const handleAbortFocus = () => {
+  focusHubStore.pausePomodoro()
+  focusHubStore.resetPomodoro()
+  activeFocusTodoId.value = ''
+}
+
+const markTaskDone = async (taskId) => {
+  const target = todoTasks.value.find((task) => String(task.id) === String(taskId))
+  if (!target || target.isCompleted) return
+  const response = await taskApi.toggle(target.id, username.value)
+  const updated = normalizeTask(response.data?.task || { ...target, is_completed: true, status: 'done' })
+  todoTasks.value = todoTasks.value.map((task) => (task.id === updated.id ? updated : task))
+}
+
+const handleCompleteFocusQuick = async () => {
+  const targetTaskId = activeFocusTodoId.value || selectedTodoTaskId.value
+  focusHubStore.pausePomodoro()
+
+  try {
+    await focusApi.complete(
+      username.value,
+      focusHubStore.pomodoro.focusMinutes,
+      focusSubject.value,
+      '',
+      focusHubStore.pomodoro.taskDifficulty
+    )
+    await markTaskDone(targetTaskId)
+  } catch (error) {
+    console.error('quick focus completion failed', error)
+    try {
+      await markTaskDone(targetTaskId)
+    } catch (taskErrorValue) {
+      console.error('failed to mark todo task complete', taskErrorValue)
+    }
+  }
+
+  activeFocusTodoId.value = ''
+  focusHubStore.resetPomodoro()
+}
+
+const statusLabel = (task) => {
+  if (task.isCompleted || task.status === 'done') return 'Done'
+  if (String(task.id) === String(selectedTodoTaskId.value) && focusHubStore.pomodoro.isRunning) return 'In Progress'
+  return task.status === 'in_progress' ? 'In Progress' : 'To-do'
+}
+
+const statusClass = (task) => {
+  const status = statusLabel(task)
+  if (status === 'Done') return 'done'
+  if (status === 'In Progress') return 'progress'
+  return 'todo'
+}
+
+onMounted(async () => {
+  try {
+    focusHubStore.hydrate(userStore.username)
+    dimensionStore.rehydrate()
+    selectedDuration.value = durationOptions.includes(Number(focusHubStore.pomodoro.focusMinutes))
+      ? Number(focusHubStore.pomodoro.focusMinutes)
+      : 25
+    selectedDateKey.value = todayDateKey()
+    taskForm.value.scheduledDate = selectedDateKey.value
+    await Promise.all([loadAvatarProfile(), loadTodoTasks()])
+  } catch (error) {
+    console.error('FocusHub init failed:', error)
+    initError.value = error instanceof Error ? error.message : 'Unknown initialization error'
+  } finally {
+    isActionHydrating.value = false
+  }
+})
+
+watch(selectedDuration, (minutes) => {
+  focusHubStore.setFocusMinutes(minutes)
+})
+
+watch(() => userStore.username, async () => {
+  await Promise.all([loadAvatarProfile(), loadTodoTasks()])
+})
+
+watch(taskModalOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : ''
+})
+
+watch(selectedDateKey, () => {
+  selectFallbackTask()
+})
+
+onUnmounted(() => {
+  document.body.style.overflow = ''
+})
 </script>
 
 <template>
-  <div class="focus-hub-page">
-    <div class="space-grid"></div>
-    <div class="scanline"></div>
-
-    <div class="hub-shell">
-      <header class="hub-header card glass-dark animate-slide-down">
-        <div class="header-copy">
-          <p class="eyebrow">FocusPort / Self-Discipline Nexus</p>
-          <h1>自律中枢</h1>
-          <p class="header-subtitle">
-            保持今天的工作界面干净可控，把专注、任务与关键节点压缩到一块面板里。
-          </p>
+  <div class="focus-home-shell" :class="{ 'is-focus-mode': isFocusMode }">
+    <div
+      v-if="initError"
+      class="focus-init-error"
+    >
+      <div class="focus-init-error-card">
+        <p>FocusHub Init Error</p>
+        <h2>Home failed to initialize</h2>
+        <span>{{ initError }}</span>
+        <div>
+          <button type="button" @click="goProfile">个人中心</button>
+          <button type="button" @click="$router.go(0)">重新加载</button>
         </div>
+      </div>
+    </div>
 
-        <div class="header-actions">
-          <button type="button" class="hub-btn ghost" @click="goBack">返回中控</button>
-          <button
-            type="button"
-            class="hub-btn accent"
-            :aria-expanded="isMacroOpen"
-            @click="isMacroOpen = !isMacroOpen"
-          >
-            {{ isMacroOpen ? '收起宏观层' : '展开宏观层' }}
+    <template v-if="isFocusMode">
+      <header class="focus-mode-header">
+        <div class="focus-mode-status">
+          <span />
+          <b>Mission Active</b>
+        </div>
+        <div class="focus-mode-actions">
+          <button type="button" @click="goProfile">个人中心</button>
+          <button type="button" @click="enter2DCity">进入城市</button>
+        </div>
+      </header>
+
+      <main class="focus-mode-main">
+        <section class="focus-mode-panel">
+          <div v-if="showFocusGoal" class="focus-mode-goal">
+            <p>{{ focusGoalTitle }}</p>
+            <h2>{{ focusActionTitle }}</h2>
+          </div>
+
+          <p class="focus-mode-time">
+            {{ formattedRemaining.slice(0, 2) }}<span>:</span>{{ formattedRemaining.slice(3, 5) }}
+          </p>
+
+          <article class="focus-mode-task">
+            <p>Now Focusing</p>
+            <h3>{{ focusActionTitle }}</h3>
+          </article>
+
+          <div class="focus-mode-controls">
+            <button type="button" class="danger" title="Abort focus" @click="handleAbortFocus">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18 18 6M6 6l12 12" stroke-linecap="round" /></svg>
+            </button>
+            <button type="button" class="primary" :title="focusHubStore.pomodoro.isRunning ? 'Pause' : 'Resume'" @click="handleToggleFocus">
+              <svg v-if="focusHubStore.pomodoro.isRunning" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h3v14H7zm7 0h3v14h-3z" /></svg>
+              <svg v-else viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+            </button>
+            <button type="button" class="success" title="Complete focus" @click="handleCompleteFocusQuick">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </button>
+          </div>
+        </section>
+      </main>
+    </template>
+
+    <template v-else>
+      <aside class="figma-side-rail" aria-label="Focus navigation">
+        <button type="button" class="rail-menu" title="Menu" @click="goHome">
+          <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7" /></svg>
+        </button>
+
+        <nav>
+          <button type="button" title="Dashboard" @click="goDashboard"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /></svg></button>
+          <button type="button" title="City" @click="enter2DCity"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3z" /></svg></button>
+          <button type="button" title="Shop" @click="goShop"><svg viewBox="0 0 24 24"><path d="M5 9h14l-1 11H6L5 9zm3 0a4 4 0 0 1 8 0" /></svg></button>
+          <button type="button" title="Mail" @click="goMail"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z" /><path d="m4 8 8 6 8-6" /></svg></button>
+          <button type="button" title="Tasks"><svg viewBox="0 0 24 24"><path d="M6 7h12M6 12h12M6 17h8" /></svg></button>
+          <button type="button" class="active" title="Calendar"><svg viewBox="0 0 24 24"><path d="M5 5h14v15H5zM8 3v4M16 3v4M5 10h14" /></svg></button>
+          <button type="button" title="Vault" @click="goVault"><svg viewBox="0 0 24 24"><path d="M7 4h10v16H7zM9 8h6M9 12h6" /></svg></button>
+          <button type="button" title="Friends" @click="goFriends"><svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c.7-3 2.5-5 5-5s4.3 2 5 5m-1.5 0c.6-2.1 2.1-3.5 4.5-3.5 2.2 0 3.8 1.4 4.5 3.5" /></svg></button>
+          <button type="button" title="Stats" @click="goStats"><svg viewBox="0 0 24 24"><path d="M5 19V5m0 14h14M9 16v-5M13 16V8M17 16v-8" /></svg></button>
+          <button type="button" title="Profile" @click="goProfile"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8c1-4 3.4-6 7-6s6 2 7 6" /></svg></button>
+          <button type="button" title="Playground" @click="goPlayground"><svg viewBox="0 0 24 24"><path d="M7 8h10l3 7-2 2-3-3H9l-3 3-2-2 3-7zM9 11h.01M12 11h.01M15 11h.01" /></svg></button>
+        </nav>
+
+        <button type="button" class="rail-logout" title="Logout" @click="logout">
+          <svg viewBox="0 0 24 24"><path d="M12 3v9m6.4-5A8 8 0 1 1 5.6 7" /></svg>
+        </button>
+      </aside>
+
+      <header class="figma-top-bar">
+        <div />
+        <div class="top-profile-cluster">
+          <button type="button" class="mail-button" aria-label="Open mail" @click="goMail">
+            <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z" /><path d="m4 8 8 6 8-6" /></svg>
+            <span v-if="mailUnread > 0">{{ mailUnread > 99 ? '99+' : mailUnread }}</span>
+          </button>
+
+          <button type="button" class="profile-button" @click="goProfile">
+            <span class="profile-avatar">
+              <img v-if="avatarIsImage" :src="avatarToken" alt="avatar">
+              <b v-else>{{ avatarToken }}</b>
+            </span>
+            <span class="profile-copy">
+              <strong>{{ displayName }}</strong>
+              <small>Admin</small>
+            </span>
+            <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
           </button>
         </div>
       </header>
 
-      <P0PilotPanel v-if="enableP0Pilot" />
-
-      <section class="macro-drawer card glass animate-fade-in" :class="{ open: isMacroOpen }">
-        <div class="drawer-head">
-          <div>
-            <p class="eyebrow">Macro Overlay</p>
-            <h2>周节点与倒数日</h2>
-          </div>
-          <span class="drawer-state">{{ isMacroOpen ? 'ONLINE' : 'STANDBY' }}</span>
-        </div>
-
-        <div class="drawer-body">
-          <div class="macro-grid">
-            <div class="macro-column">
-              <div class="section-head">
-                <h3>本周节点</h3>
-                <p>每一天最多 2 条关键节点。</p>
-              </div>
-
-              <div class="week-strip">
-                <article
-                  v-for="day in weekDays"
-                  :key="day.dateKey"
-                  class="day-card"
-                  :class="{ today: day.isToday }"
-                >
-                  <div class="day-topline">
-                    <div>
-                      <p class="day-label">{{ day.label }}</p>
-                      <strong>{{ day.dayNumber }}</strong>
-                    </div>
-                    <span>{{ day.monthLabel }}</span>
-                  </div>
-
-                  <div class="node-list">
-                    <div
-                      v-for="(note, noteIndex) in day.notes"
-                      :key="`${day.dateKey}-${noteIndex}`"
-                      class="node-row"
-                    >
-                      <input
-                        class="node-input"
-                        :value="note"
-                        maxlength="28"
-                        placeholder="输入节点"
-                        @change="handleWeekNoteChange(day.dateKey, noteIndex, $event)"
-                      />
-                      <button
-                        type="button"
-                        class="icon-btn"
-                        aria-label="删除节点"
-                        @click="focusHubStore.deleteWeekNote(day.dateKey, noteIndex)"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    v-if="day.notes.length < 2"
-                    type="button"
-                    class="mini-link"
-                    @click="focusHubStore.addWeekNote(day.dateKey)"
-                  >
-                    + 添加节点
-                  </button>
-                </article>
+      <main class="figma-home-main">
+        <section class="figma-left-column">
+          <article class="pomodoro-card">
+            <div class="timer-row">
+              <strong>{{ formattedRemaining.replace(':', ' : ') }}</strong>
+              <div class="timer-ring">
+                <svg viewBox="0 0 84 84">
+                  <circle cx="42" cy="42" :r="ringRadius" />
+                  <circle cx="42" cy="42" :r="ringRadius" :stroke-dasharray="ringCircumference" :stroke-dashoffset="ringOffset" />
+                </svg>
+                <span>{{ progressPercent }}%</span>
               </div>
             </div>
 
-            <div class="macro-column">
-              <div class="section-head">
-                <h3>倒数日</h3>
-                <p>用来盯住上线、DDL 或考试节点。</p>
+            <button
+              type="button"
+              class="start-focus-btn"
+              :disabled="focusActionDisabled"
+              :title="selectedTaskIsDone ? '已完成任务不能再启动番茄钟' : focusActionLabel"
+              @click="handleToggleFocus"
+            >
+              {{ focusActionLabel }}
+            </button>
+
+            <div class="duration-track">
+              <button
+                v-for="m in durationOptions"
+                :key="m"
+                type="button"
+                :class="{ active: selectedDuration === m }"
+                :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus"
+                @click="handleDurationSelect(m)"
+              >
+                {{ m }}
+              </button>
+            </div>
+          </article>
+
+          <article class="task-list-panel">
+            <div class="task-list-scroll">
+              <button
+                v-for="task in visibleTasks"
+                :key="task.id"
+                type="button"
+                class="todo-card"
+                :class="{ selected: String(task.id) === String(selectedTodoTaskId), completed: task.isCompleted }"
+                @click="selectTask(task)"
+              >
+                <span class="todo-category">{{ task.category }}</span>
+                <strong>{{ task.title }}</strong>
+                <span class="todo-time">
+                  <svg viewBox="0 0 24 24"><path d="M12 7v5l3 2" /><circle cx="12" cy="12" r="8" /></svg>
+                  {{ task.scheduledTime || 'Today' }}
+                </span>
+                <span class="todo-status" :class="statusClass(task)">{{ statusLabel(task) }}</span>
+                <span class="todo-icon" :style="{ backgroundColor: `${task.accent}18`, color: task.accent }">
+                  <svg viewBox="0 0 24 24"><path d="M8 6h8v12H8zM10 4h4v4h-4z" /></svg>
+                </span>
+              </button>
+
+              <div v-if="!visibleTasks.length" class="empty-task-state">
+                <strong>暂无任务</strong>
+                <span>{{ selectedDateKey }} 没有待办。</span>
               </div>
-
-              <form class="countdown-form" @submit.prevent="submitCountdown">
-                <input
-                  v-model="countdownTitle"
-                  class="input"
-                  maxlength="36"
-                  placeholder="例如：产品上线"
-                />
-                <input v-model="countdownDate" class="input" type="date" />
-                <button type="submit" class="hub-btn success">添加</button>
-              </form>
-
-              <div v-if="countdownCards.length" class="countdown-list">
-                <article
-                  v-for="item in countdownCards"
-                  :key="item.id"
-                  class="countdown-card"
-                  :class="countdownTone(item.targetDate)"
-                >
-                  <div>
-                    <p class="countdown-title">{{ item.title }}</p>
-                    <p class="countdown-date-label">{{ item.targetDate }}</p>
-                  </div>
-                  <div class="countdown-meta">
-                    <strong>{{ countdownStatus(item.targetDate) }}</strong>
-                    <button
-                      type="button"
-                      class="icon-btn"
-                      aria-label="删除倒数日"
-                      @click="focusHubStore.deleteCountdown(item.id)"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </article>
-              </div>
-
-              <div v-else class="empty-block">
-                <p>还没有倒数目标。</p>
-                <span>把真正重要的时间点抛到这里，主面板才能更专注。</span>
-              </div>
             </div>
-          </div>
-        </div>
-      </section>
 
-      <main class="hub-main">
-        <section class="pomodoro-panel card glass-strong animate-slide-up">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Pomodoro Engine</p>
-              <h2>{{ phaseLabel }}</h2>
-            </div>
-            <span class="status-pill" :class="{ break: focusHubStore.pomodoro.mode === 'break' }">
-              {{ focusHubStore.pomodoro.isRunning ? 'RUNNING' : 'PAUSED' }}
-            </span>
-          </div>
+            <p v-if="taskError" class="task-error">{{ taskError }}</p>
 
-          <div v-if="focusHubStore.pomodoro.mode !== 'break'" class="hub-duration-pills">
-            <button
-              v-for="m in durationOptions"
-              :key="m"
-              type="button"
-              class="hub-pill"
-              :class="{ active: focusHubStore.pomodoro.focusMinutes === m }"
-              :disabled="focusHubStore.pomodoro.isRunning"
-              @click="focusHubStore.setFocusMinutes(m)"
-            >
-              {{ m }}m
-            </button>
-          </div>
-
-          <div v-if="focusHubStore.pomodoro.mode !== 'break'" class="hub-difficulty-row">
-            <button
-              type="button"
-              class="hub-diff-btn"
-              :class="{ active: focusHubStore.pomodoro.taskDifficulty === 'L1' }"
-              :disabled="focusHubStore.pomodoro.isRunning"
-              @click="focusHubStore.setTaskDifficulty('L1')"
-            >
-              L1 日常
-            </button>
-            <button
-              type="button"
-              class="hub-diff-btn"
-              :class="{ active: focusHubStore.pomodoro.taskDifficulty === 'L2' }"
-              :disabled="focusHubStore.pomodoro.isRunning"
-              @click="focusHubStore.setTaskDifficulty('L2')"
-            >
-              L2 硬核
-            </button>
-          </div>
-
-          <div v-if="focusHubStore.pomodoro.linkedTaskTitle" class="linked-task-chip">
-            <span>关联任务</span>
-            <strong>{{ focusHubStore.pomodoro.linkedTaskTitle }}</strong>
-          </div>
-
-          <div class="timer-stage">
-            <svg class="progress-ring" viewBox="0 0 240 240" aria-hidden="true">
-              <defs>
-                <linearGradient v-if="focusHubStore.pomodoro.mode !== 'break'" id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#5ce3ff" />
-                  <stop offset="100%" stop-color="#63ffad" />
-                </linearGradient>
-                <linearGradient v-else id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#ffb757" />
-                  <stop offset="100%" stop-color="#ff7147" />
-                </linearGradient>
-              </defs>
-              <circle class="ring-base" cx="120" cy="120" r="92" />
-              <circle
-                class="ring-progress"
-                cx="120"
-                cy="120"
-                r="92"
-                :stroke-dasharray="circleCircumference"
-                :stroke-dashoffset="circleOffset"
-              />
-            </svg>
-
-            <div class="timer-copy">
-              <p class="mode-caption">{{ phaseDescription }}</p>
-              <strong class="timer-value">{{ formattedTimer }}</strong>
-              <span class="timer-progress">{{ Math.round(progressRatio * 100) }}% complete</span>
-            </div>
-          </div>
-
-          <div class="pomodoro-stats">
-            <div class="stat-chip">
-              <span>今日完成轮次</span>
-              <strong>{{ focusHubStore.pomodoro.completedFocusSessions }}</strong>
-            </div>
-            <div class="stat-chip">
-              <span>当前节奏</span>
-              <strong>{{ focusHubStore.pomodoro.focusMinutes }} / {{ focusHubStore.pomodoro.breakMinutes }}</strong>
-            </div>
-          </div>
-
-          <div class="pomodoro-actions">
-            <button
-              v-if="!focusHubStore.pomodoro.isRunning"
-              type="button"
-              class="hub-btn success large"
-              @click="focusHubStore.startPomodoro()"
-            >
-              开始
-            </button>
-            <button
-              v-else
-              type="button"
-              class="hub-btn warning large"
-              @click="focusHubStore.pausePomodoro()"
-            >
-              暂停
-            </button>
-            <button
-              type="button"
-              class="hub-btn ghost large"
-              @click="focusHubStore.resetPomodoro()"
-            >
-              重置
-            </button>
-          </div>
+            <button type="button" class="add-task-bottom" @click="openTaskModal">添加任务</button>
+          </article>
         </section>
 
-        <!-- Hub settlement modal -->
-        <div v-if="showHubSettlement" class="hub-settle-overlay">
-          <div class="hub-settle-card">
-            <h3>专注完成</h3>
-            <p>本轮 {{ focusHubStore.pomodoro.focusMinutes }} 分钟 · 难度 {{ focusHubStore.pomodoro.taskDifficulty }}</p>
-            <textarea
-              v-model="hubSessionLog"
-              class="hub-settle-input"
-              placeholder="写一句日志记录本轮做了什么（可留空）"
-              :disabled="isHubSettling"
-            />
-            <div class="hub-settle-actions">
-              <button
-                type="button"
-                class="hub-btn primary large"
-                :disabled="isHubSettling"
-                @click="submitHubSettlement"
-              >
-                {{ isHubSettling ? '结算中...' : '提交结算' }}
-              </button>
-              <button
-                type="button"
-                class="hub-btn ghost large"
-                :disabled="isHubSettling"
-                @click="skipHubSettlement"
-              >
-                跳过
-              </button>
-            </div>
-          </div>
-        </div>
+        <section class="calendar-card">
+          <header class="calendar-toolbar">
+            <button type="button" class="today-button" @click="selectToday">Today</button>
 
-        <section class="tasks-panel card glass animate-slide-up">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Daily Tasks</p>
-              <h2>今日任务</h2>
+            <div class="month-switcher">
+              <button type="button" @click="shiftMonth(-1)">‹</button>
+              <strong>{{ monthTitle }}</strong>
+              <button type="button" @click="shiftMonth(1)">›</button>
             </div>
-            <div class="task-summary">
-              <strong>{{ completedTasks }}/{{ totalTasks || 0 }}</strong>
-              <span>done today</span>
-            </div>
+
+            <button type="button" class="new-event-btn" @click="openTaskModal">+ Add New Event</button>
+          </header>
+
+          <div class="calendar-weekdays">
+            <span v-for="label in weekdayLabels" :key="label">{{ label }}</span>
           </div>
 
-          <form class="task-entry" @submit.prevent="submitTask">
-            <input
-              v-model="newTaskTitle"
-              class="input"
-              maxlength="72"
-              placeholder="输入任务后回车，例如：完成发布页交互稿"
-            />
-            <button type="submit" class="hub-btn primary">录入</button>
-          </form>
-
-          <div v-if="focusHubStore.todayTasks.length" class="task-list">
-            <article
-              v-for="task in focusHubStore.todayTasks"
-              :key="task.id"
-              class="task-row"
-              :class="{ completed: task.completed }"
+          <div class="calendar-grid">
+            <button
+              v-for="cell in calendarCells"
+              :key="cell.dateKey"
+              type="button"
+              class="calendar-cell"
+              :class="{ muted: !cell.inMonth, today: cell.isToday, selected: cell.isSelected }"
+              @click="selectDate(cell.dateKey)"
             >
-              <button
-                type="button"
-                class="check-btn"
-                :aria-pressed="task.completed"
-                @click="focusHubStore.toggleTask(task.id)"
+              <span class="day-number">{{ cell.day }}</span>
+              <span
+                v-for="task in cell.tasks.slice(0, 2)"
+                :key="task.id"
+                class="calendar-event"
+                :class="{ done: task.isCompleted }"
+                :style="{ '--event-color': task.accent }"
               >
-                <span>{{ task.completed ? '✓' : '' }}</span>
-              </button>
-
-              <div class="task-copy">
-                <div class="task-title-line">
-                  <p class="task-title">{{ task.title }}</p>
-                  <span v-if="task.isDeferred" class="deferred-badge">
-                    延期 {{ task.deferredCount }}d
-                  </span>
-                </div>
-                <p class="task-meta">
-                  创建于 {{ task.createdAt.slice(0, 10) }}
-                  <span v-if="task.deferredFrom"> · 来自 {{ task.deferredFrom }}</span>
-                </p>
-              </div>
-
-              <button
-                type="button"
-                class="icon-btn danger"
-                aria-label="删除任务"
-                @click="focusHubStore.deleteTask(task.id)"
-              >
-                ×
-              </button>
-            </article>
-          </div>
-
-          <div v-else class="empty-block task-empty">
-            <p>今天的任务面板还是空的。</p>
-            <span>先把最重要的一件事丢进来，再启动番茄钟。</span>
-          </div>
-
-          <div class="archive-box">
-            <button type="button" class="archive-toggle" @click="showArchive = !showArchive">
-              <span>历史归档</span>
-              <strong>{{ focusHubStore.archiveTasks.length }}</strong>
+                {{ task.title }}
+              </span>
+              <span v-if="cell.tasks.length > 2" class="calendar-more">+{{ cell.tasks.length - 2 }}</span>
             </button>
-
-            <div v-if="showArchive" class="archive-list">
-              <article
-                v-for="item in focusHubStore.archiveTasks.slice(0, 8)"
-                :key="`${item.id}-${item.archivedOn}`"
-                class="archive-row"
-              >
-                <div>
-                  <p>{{ item.title }}</p>
-                  <span>{{ item.archivedOn }} archived</span>
-                </div>
-                <strong>{{ item.completedAt ? item.completedAt.slice(0, 10) : 'done' }}</strong>
-              </article>
-
-              <div v-if="!focusHubStore.archiveTasks.length" class="archive-empty">
-                还没有历史记录。
-              </div>
-            </div>
           </div>
         </section>
       </main>
-    </div>
+
+      <div v-if="taskModalOpen" class="task-modal-overlay" @click.self="closeTaskModal">
+        <form class="task-modal" @submit.prevent="createTodoTask">
+          <header>
+            <p>New Event</p>
+            <button type="button" @click="closeTaskModal">×</button>
+          </header>
+
+          <label>
+            <span>任务</span>
+            <input v-model="taskForm.content" type="text" maxlength="80" placeholder="输入任务内容">
+          </label>
+
+          <div class="task-modal-grid">
+            <label>
+              <span>日期</span>
+              <input v-model="taskForm.scheduledDate" type="date" pattern="\d{4}-\d{2}-\d{2}">
+            </label>
+            <label>
+              <span>时间</span>
+              <input v-model="taskForm.scheduledTime" type="time">
+            </label>
+          </div>
+
+          <label>
+            <span>分类</span>
+            <input v-model="taskForm.category" type="text" maxlength="28" placeholder="FocusPort">
+          </label>
+
+          <div class="accent-row">
+            <button
+              v-for="accent in accentOptions"
+              :key="accent"
+              type="button"
+              :class="{ active: taskForm.accent === accent }"
+              :style="{ backgroundColor: accent }"
+              @click="taskForm.accent = accent"
+            />
+          </div>
+
+          <p v-if="taskError" class="task-error">{{ taskError }}</p>
+
+          <footer>
+            <button type="button" class="ghost" @click="closeTaskModal">取消</button>
+            <button type="submit" :disabled="isTaskSubmitting">{{ isTaskSubmitting ? '创建中' : '创建任务' }}</button>
+          </footer>
+        </form>
+      </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.focus-hub-page {
-  position: relative;
+.focus-home-shell {
   min-height: 100vh;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at top left, rgba(48, 212, 255, 0.16), transparent 30%),
-    radial-gradient(circle at top right, rgba(86, 255, 155, 0.14), transparent 25%),
-    linear-gradient(180deg, #07111f 0%, #091523 38%, #030812 100%);
-  color: var(--color-text-primary);
-}
-
-.space-grid,
-.scanline {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-}
-
-.space-grid {
-  background-image:
-    linear-gradient(rgba(72, 183, 255, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(72, 183, 255, 0.08) 1px, transparent 1px);
-  background-size: 72px 72px;
-  mask-image: radial-gradient(circle at center, black 55%, transparent 100%);
-  opacity: 0.28;
-}
-
-.scanline {
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.02) 0%,
-    transparent 18%,
-    transparent 52%,
-    rgba(255, 255, 255, 0.02) 100%
-  );
-  mix-blend-mode: screen;
-}
-
-.hub-shell {
-  position: relative;
-  z-index: 1;
-  width: min(1360px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 28px 0 40px;
-}
-
-.hub-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 28px;
-  margin-bottom: 18px;
-  border-radius: 28px;
-}
-
-.header-copy h1 {
-  margin: 8px 0 12px;
-  font-size: clamp(34px, 5vw, 56px);
-  line-height: 0.95;
-  letter-spacing: 0.04em;
-}
-
-.header-subtitle {
-  max-width: 620px;
-  color: rgba(219, 238, 255, 0.74);
-}
-
-.eyebrow {
-  margin: 0;
-  color: #83e7ff;
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.header-actions {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.macro-drawer {
-  padding: 0;
-  margin-bottom: 18px;
-  border-radius: 28px;
-  overflow: hidden;
-}
-
-.drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 22px 24px;
-}
-
-.drawer-head h2,
-.panel-head h2 {
-  margin: 6px 0 0;
-  font-size: 28px;
-}
-
-.drawer-state {
-  padding: 8px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(95, 231, 255, 0.26);
-  color: #9ef8ff;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.12em;
-}
-
-.drawer-body {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 220ms ease;
-}
-
-.macro-drawer.open .drawer-body {
-  grid-template-rows: 1fr;
-}
-
-.macro-grid {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.macro-drawer.open .macro-grid {
-  padding: 0 24px 24px;
-}
-
-.macro-column + .macro-column {
-  margin-top: 20px;
-}
-
-.section-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.section-head h3 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.section-head p {
-  margin: 0;
-  color: rgba(219, 238, 255, 0.58);
-  font-size: 13px;
-}
-
-.week-strip {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.day-card {
-  min-height: 184px;
-  padding: 14px;
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(8, 29, 53, 0.94), rgba(4, 12, 28, 0.98));
-  border: 1px solid rgba(95, 231, 255, 0.12);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
-.day-card.today {
-  border-color: rgba(95, 231, 255, 0.45);
-  box-shadow: 0 0 0 1px rgba(95, 231, 255, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
-
-.day-topline {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 14px;
-}
-
-.day-label {
-  margin: 0 0 4px;
-  color: rgba(219, 238, 255, 0.55);
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-}
-
-.day-topline strong {
-  font-size: 26px;
-}
-
-.day-topline span {
-  color: rgba(219, 238, 255, 0.56);
-  font-family: var(--font-mono);
-}
-
-.node-list {
-  display: grid;
-  gap: 10px;
-}
-
-.node-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.node-input {
   width: 100%;
-  min-width: 0;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(95, 231, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  color: #f6fbff;
-  font-size: 13px;
+  overflow: hidden;
+  background: #1b2432;
+  color: #f5f7fb;
+  font-family: "Nunito Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif;
 }
 
-.node-input:focus {
-  outline: none;
-  border-color: rgba(95, 231, 255, 0.45);
-  box-shadow: 0 0 0 3px rgba(72, 183, 255, 0.12);
+.figma-side-rail {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 40;
+  width: 86px;
+  background: #273142;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-right: 1px solid rgba(49, 61, 79, 0.9);
 }
 
-.mini-link {
-  margin-top: 12px;
-  border: none;
+.rail-menu,
+.rail-logout,
+.figma-side-rail nav button {
+  width: 52px;
+  height: 52px;
+  border: 0;
   background: transparent;
-  color: #7ddcf8;
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0;
-}
-
-.countdown-form,
-.task-entry {
-  display: grid;
-  grid-template-columns: 1.4fr 0.9fr auto;
-  gap: 12px;
-}
-
-.countdown-list {
-  margin-top: 14px;
-  display: grid;
-  gap: 12px;
-}
-
-.countdown-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 18px;
-  border-radius: 18px;
-  border: 1px solid rgba(95, 231, 255, 0.16);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.countdown-card.warning,
-.countdown-card.today {
-  border-color: rgba(255, 183, 85, 0.36);
-}
-
-.countdown-card.expired {
-  border-color: rgba(255, 113, 113, 0.24);
-}
-
-.countdown-title {
-  margin: 0 0 6px;
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.countdown-date-label {
-  margin: 0;
-  color: rgba(219, 238, 255, 0.58);
-  font-size: 12px;
-}
-
-.countdown-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.countdown-meta strong {
-  font-size: 24px;
-  color: #ffcf7f;
-  white-space: nowrap;
-}
-
-.countdown-card.normal .countdown-meta strong {
-  color: #86f2ff;
-}
-
-.countdown-card.expired .countdown-meta strong {
-  color: #ff9292;
-}
-
-.empty-block {
-  padding: 24px;
-  border-radius: 18px;
-  border: 1px dashed rgba(95, 231, 255, 0.16);
-  background: rgba(255, 255, 255, 0.025);
-  color: rgba(219, 238, 255, 0.72);
-}
-
-.empty-block p {
-  margin: 0 0 8px;
-  font-size: 15px;
-}
-
-.empty-block span {
-  color: rgba(219, 238, 255, 0.5);
-  font-size: 13px;
-}
-
-.hub-main {
-  display: grid;
-  grid-template-columns: minmax(320px, 0.4fr) minmax(380px, 0.6fr);
-  gap: 18px;
-}
-
-.pomodoro-panel,
-.tasks-panel {
-  padding: 24px;
-  border-radius: 28px;
-}
-
-.panel-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.status-pill,
-.task-summary {
-  padding: 10px 14px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(95, 231, 255, 0.16);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-}
-
-.status-pill.break {
-  border-color: rgba(255, 183, 85, 0.28);
-  color: #ffd08d;
-}
-
-.task-summary {
-  text-align: right;
-}
-
-.task-summary strong {
-  display: block;
-  font-size: 22px;
-}
-
-.task-summary span {
-  color: rgba(219, 238, 255, 0.5);
-}
-
-.timer-stage {
-  position: relative;
+  color: rgba(255, 255, 255, 0.72);
   display: grid;
   place-items: center;
-  min-height: 360px;
+  cursor: pointer;
+  position: relative;
 }
 
-.progress-ring {
-  width: min(100%, 320px);
-  aspect-ratio: 1;
-  transform: rotate(-90deg);
-  filter: drop-shadow(0 0 20px rgba(72, 183, 255, 0.2));
+.rail-menu {
+  margin-top: 18px;
+  margin-bottom: 22px;
 }
 
-.ring-base,
-.ring-progress {
+.figma-side-rail nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.figma-side-rail svg {
+  width: 22px;
+  height: 22px;
   fill: none;
-  stroke-width: 10;
-}
-
-.ring-base {
-  stroke: rgba(255, 255, 255, 0.08);
-}
-
-.ring-progress {
-  stroke: url(#ringGradient);
+  stroke: currentColor;
+  stroke-width: 1.9;
   stroke-linecap: round;
-  transition: stroke-dashoffset 320ms linear;
+  stroke-linejoin: round;
 }
 
-.timer-copy {
+.figma-side-rail button:hover,
+.figma-side-rail button.active {
+  color: #4880ff;
+}
+
+.figma-side-rail button.active::before {
+  content: "";
+  position: absolute;
+  left: -17px;
+  width: 4px;
+  height: 52px;
+  border-radius: 0 2px 2px 0;
+  background: #4880ff;
+}
+
+.rail-logout {
+  margin-top: auto;
+  margin-bottom: 24px;
+}
+
+.figma-top-bar {
+  position: fixed;
+  top: 0;
+  left: 86px;
+  right: 0;
+  z-index: 30;
+  height: 70px;
+  background: #273142;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 42px;
+}
+
+.top-profile-cluster {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.mail-button,
+.profile-button {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+
+.mail-button {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+}
+
+.mail-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: #4880ff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mail-button span {
+  position: absolute;
+  top: 0;
+  right: 1px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #f93c65;
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.profile-button {
+  display: grid;
+  grid-template-columns: 44px auto 18px;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+
+.profile-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: #354258;
+  color: white;
+  font-weight: 800;
+}
+
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-copy strong,
+.profile-copy small {
+  display: block;
+}
+
+.profile-copy strong {
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.profile-copy small {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.profile-button > svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 2;
+}
+
+.figma-home-main {
+  height: 100vh;
+  padding: 92px 48px 28px 106px;
+  display: flex;
+  gap: 32px;
+  box-sizing: border-box;
+}
+
+.figma-left-column {
+  width: 324px;
+  flex: 0 0 324px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.pomodoro-card {
+  height: 204px;
+  border-radius: 20px;
+  background: #111827;
+  padding: 28px 26px 22px;
+  color: white;
+  box-shadow: 0 22px 42px rgba(6, 11, 20, 0.24);
+}
+
+.timer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.timer-row > strong {
+  font-size: 38px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.timer-ring {
+  position: relative;
+  width: 76px;
+  height: 76px;
+}
+
+.timer-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.timer-ring circle {
+  fill: none;
+  stroke-width: 7;
+  stroke: rgba(72, 128, 255, 0.16);
+}
+
+.timer-ring circle + circle {
+  stroke: #4880ff;
+  stroke-linecap: round;
+}
+
+.timer-ring span {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  text-align: center;
-  padding: 56px;
-}
-
-.mode-caption {
-  margin: 0 0 10px;
-  color: rgba(219, 238, 255, 0.55);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  font-size: 11px;
-}
-
-.timer-value {
-  display: block;
-  font-size: clamp(56px, 8vw, 78px);
-  letter-spacing: 0.08em;
-  font-family: var(--font-mono);
-  text-shadow: 0 0 24px rgba(95, 231, 255, 0.2);
-}
-
-.timer-progress {
-  margin-top: 10px;
-  color: rgba(219, 238, 255, 0.58);
-  font-size: 13px;
-}
-
-.pomodoro-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.stat-chip {
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(95, 231, 255, 0.12);
-}
-
-.stat-chip span {
-  display: block;
-  color: rgba(219, 238, 255, 0.52);
   font-size: 12px;
-  margin-bottom: 6px;
-}
-
-.stat-chip strong {
-  font-size: 20px;
-}
-
-.pomodoro-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.task-entry {
-  margin-bottom: 18px;
-  grid-template-columns: 1fr auto;
-}
-
-.task-list {
-  display: grid;
-  gap: 12px;
-}
-
-.task-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 14px;
-  align-items: center;
-  padding: 14px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(95, 231, 255, 0.1);
-}
-
-.task-row.completed {
-  opacity: 0.72;
-  border-color: rgba(99, 255, 173, 0.18);
-}
-
-.task-row.completed .task-title {
-  text-decoration: line-through;
-  color: rgba(219, 238, 255, 0.58);
-}
-
-.check-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
-  border: 1px solid rgba(95, 231, 255, 0.24);
-  background: rgba(255, 255, 255, 0.04);
-  color: #63ffad;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  font-weight: 800;
-}
-
-.task-copy {
-  min-width: 0;
-}
-
-.task-title-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.task-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  word-break: break-word;
-}
-
-.task-meta {
-  margin: 6px 0 0;
-  color: rgba(219, 238, 255, 0.48);
-  font-size: 12px;
-}
-
-.deferred-badge {
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(255, 183, 85, 0.12);
-  border: 1px solid rgba(255, 183, 85, 0.28);
-  color: #ffc886;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-}
-
-.archive-box {
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.archive-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(95, 231, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
-  color: inherit;
-  cursor: pointer;
-}
-
-.archive-list {
-  margin-top: 12px;
-  display: grid;
-  gap: 10px;
-}
-
-.archive-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.archive-row p,
-.archive-row span,
-.archive-row strong {
-  margin: 0;
-}
-
-.archive-row span {
-  color: rgba(219, 238, 255, 0.46);
-  font-size: 12px;
-}
-
-.archive-row strong {
-  color: rgba(219, 238, 255, 0.6);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.archive-empty {
-  padding: 12px 14px;
-  border-radius: 14px;
-  color: rgba(219, 238, 255, 0.5);
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.hub-btn,
-.icon-btn,
-.check-btn,
-.archive-toggle {
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
-}
-
-.hub-btn:hover,
-.icon-btn:hover,
-.check-btn:hover,
-.archive-toggle:hover {
-  transform: translateY(-1px);
-}
-
-.hub-btn {
-  min-height: 44px;
-  padding: 0 18px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #f6fbff;
-  font-size: 14px;
   font-weight: 700;
 }
 
-.hub-btn.large {
-  min-height: 50px;
-}
-
-.hub-btn.primary {
-  background: linear-gradient(135deg, rgba(54, 192, 255, 0.26), rgba(53, 122, 255, 0.18));
-  border-color: rgba(95, 231, 255, 0.24);
-}
-
-.hub-btn.accent {
-  background: linear-gradient(135deg, rgba(95, 231, 255, 0.18), rgba(99, 255, 173, 0.14));
-  border-color: rgba(95, 231, 255, 0.24);
-}
-
-.hub-btn.success {
-  background: linear-gradient(135deg, rgba(63, 255, 146, 0.28), rgba(34, 197, 94, 0.18));
-  border-color: rgba(99, 255, 173, 0.26);
-}
-
-.hub-btn.warning {
-  background: linear-gradient(135deg, rgba(255, 183, 85, 0.28), rgba(255, 120, 63, 0.16));
-  border-color: rgba(255, 183, 85, 0.26);
-}
-
-.hub-btn.ghost {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-.hub-btn:focus-visible,
-.icon-btn:focus-visible,
-.check-btn:focus-visible,
-.archive-toggle:focus-visible,
-.mini-link:focus-visible {
-  outline: 2px solid rgba(95, 231, 255, 0.7);
-  outline-offset: 2px;
-}
-
-.icon-btn {
-  width: 34px;
+.start-focus-btn {
+  display: block;
+  width: 148px;
   height: 34px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: #e8f8ff;
-  display: grid;
-  place-items: center;
-  font-size: 20px;
-  line-height: 1;
+  margin: 14px auto 18px;
+  border: 0;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 800;
+  background: linear-gradient(90deg, #4880ff, #5f33e1);
+  cursor: pointer;
 }
 
-.icon-btn.danger {
-  color: #ff9b9b;
-  border-color: rgba(255, 113, 113, 0.2);
+.start-focus-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
-.hub-duration-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.hub-pill {
-  border: none;
+.duration-track {
+  height: 8px;
   border-radius: 999px;
-  padding: 8px 14px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #dbeeff;
-  cursor: pointer;
-  font-weight: 700;
-  font-size: 13px;
-  transition: background 180ms ease, color 180ms ease;
-}
-
-.hub-pill.active {
-  background: linear-gradient(135deg, rgba(95, 231, 255, 0.28), rgba(99, 255, 173, 0.18));
-  border: 1px solid rgba(95, 231, 255, 0.24);
-  color: #fff;
-}
-
-.hub-pill:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.hub-difficulty-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.hub-diff-btn {
-  flex: 1;
-  border: 1px solid rgba(95, 231, 255, 0.16);
-  border-radius: 12px;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #dbeeff;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 700;
-  text-align: center;
-  transition: background 180ms ease, border-color 180ms ease;
-}
-
-.hub-diff-btn.active {
-  border-color: rgba(95, 231, 255, 0.42);
-  background: linear-gradient(135deg, rgba(54, 192, 255, 0.22), rgba(53, 122, 255, 0.16));
-}
-
-.hub-diff-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.linked-task-chip {
+  background: linear-gradient(90deg, #4880ff 0 52%, rgba(255, 255, 255, 0.94) 52% 100%);
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 14px;
+}
+
+.duration-track button {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 0;
+  background: rgba(255, 255, 255, 0);
+  color: transparent;
+  cursor: pointer;
+}
+
+.duration-track button.active {
+  width: 28px;
+  height: 28px;
+  background: #7e8793;
+}
+
+.task-list-panel {
+  min-height: 0;
+  flex: 1;
   border-radius: 14px;
-  background: rgba(99, 255, 173, 0.08);
-  border: 1px solid rgba(99, 255, 173, 0.18);
-  margin-bottom: 14px;
-  font-size: 13px;
-}
-
-.linked-task-chip span {
-  color: rgba(219, 238, 255, 0.55);
-}
-
-.linked-task-chip strong {
-  color: #63ffad;
-}
-
-.hub-settle-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
+  border: 1px solid #313d4f;
+  background: #273142;
+  padding: 24px 16px 16px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(2, 6, 18, 0.72);
-  backdrop-filter: blur(14px);
+  flex-direction: column;
 }
 
-.hub-settle-card {
-  width: min(440px, calc(100vw - 24px));
-  border-radius: 24px;
-  padding: 24px;
-  background:
-    linear-gradient(180deg, rgba(16, 34, 74, 0.96), rgba(8, 16, 36, 0.98)),
-    rgba(11, 18, 32, 0.92);
-  border: 1.5px solid rgba(95, 231, 255, 0.28);
-  color: #eef7ff;
+.task-list-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0 14px;
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
-.hub-settle-card h3 {
-  margin: 0;
+.todo-card {
+  position: relative;
+  min-height: 94px;
+  border: 1px solid transparent;
+  border-radius: 15px;
+  background: #fff;
+  color: #202735;
+  padding: 14px 48px 14px 18px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.04);
+}
+
+.todo-card.selected {
+  border-color: #4880ff;
+  box-shadow: 0 0 0 2px rgba(72, 128, 255, 0.18);
+}
+
+.todo-card.completed {
+  opacity: 0.72;
+}
+
+.todo-category {
+  display: block;
+  max-width: 170px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.todo-card strong {
+  display: block;
+  margin-top: 3px;
+  max-width: 180px;
+  color: #151a24;
+  font-size: 16px;
+  line-height: 18px;
+  font-weight: 800;
+}
+
+.todo-time {
+  position: absolute;
+  left: 18px;
+  bottom: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #8a55ff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.todo-time svg,
+.todo-icon svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.todo-status {
+  position: absolute;
+  right: 10px;
+  bottom: 12px;
+  max-width: 76px;
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 10px;
+  text-align: center;
+}
+
+.todo-status.done {
+  background: #eee8ff;
+  color: #7b55ff;
+}
+
+.todo-status.progress {
+  background: #ffece8;
+  color: #f05f42;
+}
+
+.todo-status.todo {
+  background: #e6f5ff;
+  color: #2388d9;
+}
+
+.todo-icon {
+  position: absolute;
+  right: 16px;
+  top: 14px;
+  width: 22px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+}
+
+.empty-task-state {
+  margin-top: 20px;
+  min-height: 120px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.empty-task-state strong,
+.empty-task-state span {
+  display: block;
+}
+
+.empty-task-state strong {
+  font-size: 16px;
+}
+
+.empty-task-state span {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.task-error {
+  color: #ff8fa3;
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+
+.add-task-bottom {
+  align-self: center;
+  width: 126px;
+  height: 38px;
+  border: 0;
+  border-radius: 12px;
+  background: #3d4a5f;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.calendar-card {
+  flex: 1;
+  min-width: 400px;
+  min-height: 0;
+  border-radius: 14px;
+  border: 1px solid #313d4f;
+  background: #273142;
+  padding: 28px 24px 18px;
+  display: flex;
+  flex-direction: column;
+}
+
+.calendar-toolbar {
+  height: 62px;
+  display: grid;
+  grid-template-columns: 180px 1fr 220px;
+  align-items: start;
+  gap: 20px;
+}
+
+.today-button,
+.new-event-btn,
+.month-switcher button {
+  border: 0;
+  color: white;
+  cursor: pointer;
+}
+
+.today-button {
+  justify-self: start;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.month-switcher {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.month-switcher strong {
+  min-width: 72px;
+  text-align: center;
   font-size: 24px;
+  line-height: 28px;
+  font-weight: 900;
 }
 
-.hub-settle-card p {
+.month-switcher button {
+  width: 22px;
+  height: 28px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 26px;
+  line-height: 24px;
+}
+
+.new-event-btn {
+  justify-self: end;
+  width: 200px;
+  height: 40px;
+  border-radius: 8px;
+  background: #4880ff;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  height: 48px;
+  border: 1px solid #313d4f;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+  background: #323d4e;
+}
+
+.calendar-weekdays span {
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.calendar-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: repeat(6, minmax(0, 1fr));
+  border: 1px solid #313d4f;
+  border-top: 0;
+}
+
+.calendar-cell {
+  position: relative;
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid rgba(49, 61, 79, 0.7);
+  border-bottom: 1px solid rgba(49, 61, 79, 0.7);
+  background: transparent;
+  color: white;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.calendar-cell:nth-child(7n) {
+  border-right: 0;
+}
+
+.calendar-cell.muted {
+  background:
+    repeating-linear-gradient(153deg, rgba(72, 128, 255, 0.08) 0 1px, transparent 1px 9px),
+    rgba(27, 36, 50, 0.35);
+}
+
+.calendar-cell.selected {
+  box-shadow: inset 0 0 0 2px rgba(72, 128, 255, 0.65);
+}
+
+.calendar-cell.today .day-number {
+  color: #4880ff;
+}
+
+.day-number {
+  position: absolute;
+  top: 14px;
+  right: 20px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.calendar-event {
+  position: relative;
+  display: block;
+  width: calc(100% - 2px);
+  height: 28px;
+  margin-top: 48px;
+  padding: 5px 8px 4px 18px;
+  overflow: hidden;
+  color: var(--event-color);
+  background:
+    linear-gradient(90deg, var(--event-color) 0 4px, transparent 4px),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--event-color) 22%, transparent) 0 1px, transparent 1px 4px),
+    color-mix(in srgb, var(--event-color) 16%, transparent);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 10px;
+  text-overflow: ellipsis;
+}
+
+.calendar-event + .calendar-event {
+  margin-top: 4px;
+}
+
+.calendar-event.done {
+  opacity: 0.52;
+}
+
+.calendar-more {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.task-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(10, 15, 24, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.task-modal {
+  width: min(460px, 100%);
+  border: 1px solid #313d4f;
+  border-radius: 14px;
+  background: #273142;
+  padding: 20px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+}
+
+.task-modal header,
+.task-modal footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.task-modal header p {
   margin: 0;
-  color: rgba(219, 238, 255, 0.68);
+  font-size: 18px;
+  font-weight: 900;
 }
 
-.hub-settle-input {
-  min-height: 100px;
-  border: 1px solid rgba(95, 231, 255, 0.18);
-  border-radius: 16px;
-  background: rgba(7, 14, 32, 0.82);
-  color: #eef7ff;
-  padding: 12px 14px;
-  resize: vertical;
+.task-modal header button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: #3d4a5f;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.task-modal label {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.task-modal label span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.task-modal input {
+  height: 42px;
+  border: 1px solid #3d4a5f;
+  border-radius: 8px;
+  background: #1b2432;
+  color: white;
+  padding: 0 12px;
   outline: none;
-  font: inherit;
-  line-height: 1.6;
 }
 
-.hub-settle-actions {
+.task-modal input:focus {
+  border-color: #4880ff;
+}
+
+.task-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  gap: 12px;
+}
+
+.accent-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.accent-row button {
+  width: 26px;
+  height: 26px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.accent-row button.active {
+  border-color: white;
+}
+
+.task-modal footer {
+  margin-top: 20px;
+  justify-content: flex-end;
+}
+
+.task-modal footer button {
+  height: 38px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 16px;
+  background: #4880ff;
+  color: white;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.task-modal footer button.ghost {
+  background: #3d4a5f;
+}
+
+.task-modal footer button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.focus-mode-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  height: 76px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 32px;
+}
+
+.focus-mode-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(147, 197, 253, 0.9);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  font-size: 12px;
+}
+
+.focus-mode-status span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #4880ff;
+  box-shadow: 0 0 18px rgba(72, 128, 255, 0.8);
+}
+
+.focus-mode-actions {
   display: flex;
   gap: 10px;
 }
 
-@media (min-width: 1040px) {
-  .macro-drawer.open .macro-grid {
-    display: grid;
-    grid-template-columns: 1.15fr 0.85fr;
-    gap: 20px;
+.focus-mode-actions button {
+  height: 36px;
+  border: 1px solid rgba(72, 128, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(39, 49, 66, 0.65);
+  color: white;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.focus-mode-main {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 80px 24px;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(72, 128, 255, 0.16), transparent 42%),
+    #111827;
+}
+
+.focus-mode-panel {
+  width: min(820px, 100%);
+  text-align: center;
+}
+
+.focus-mode-goal p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  text-transform: uppercase;
+  font-weight: 900;
+}
+
+.focus-mode-goal h2 {
+  margin: 10px 0 0;
+  color: white;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.focus-mode-time {
+  margin: 28px 0 0;
+  color: white;
+  font-size: clamp(84px, 13vw, 144px);
+  line-height: 1;
+  font-weight: 300;
+}
+
+.focus-mode-time span {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.focus-mode-task {
+  width: min(640px, 100%);
+  margin: 36px auto 0;
+  border: 1px solid rgba(72, 128, 255, 0.28);
+  border-radius: 14px;
+  background: rgba(39, 49, 66, 0.68);
+  padding: 22px;
+}
+
+.focus-mode-task p {
+  margin: 0;
+  color: #82a8ff;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.focus-mode-task h3 {
+  margin: 10px 0 0;
+  color: white;
+  font-size: 22px;
+  line-height: 1.35;
+}
+
+.focus-mode-controls {
+  margin-top: 34px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 28px;
+}
+
+.focus-mode-controls button {
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: white;
+  cursor: pointer;
+}
+
+.focus-mode-controls svg {
+  width: 24px;
+  height: 24px;
+}
+
+.focus-mode-controls .danger,
+.focus-mode-controls .success {
+  width: 46px;
+  height: 46px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.focus-mode-controls .primary {
+  width: 64px;
+  height: 64px;
+  background: rgba(72, 128, 255, 0.22);
+  border: 1px solid rgba(72, 128, 255, 0.55);
+  box-shadow: 0 0 28px rgba(72, 128, 255, 0.22);
+}
+
+.focus-init-error {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(10, 15, 24, 0.94);
+}
+
+.focus-init-error-card {
+  width: min(560px, 100%);
+  border: 1px solid rgba(255, 143, 163, 0.4);
+  border-radius: 14px;
+  background: #273142;
+  padding: 24px;
+}
+
+.focus-init-error-card p,
+.focus-init-error-card h2 {
+  margin: 0;
+}
+
+.focus-init-error-card p {
+  color: #ff8fa3;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.focus-init-error-card h2 {
+  margin-top: 8px;
+  font-size: 22px;
+}
+
+.focus-init-error-card span {
+  display: block;
+  margin-top: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.focus-init-error-card div {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.focus-init-error-card button {
+  height: 38px;
+  border: 0;
+  border-radius: 8px;
+  background: #4880ff;
+  color: white;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+@media (max-width: 1120px) {
+  .figma-home-main {
+    padding-right: 24px;
+    gap: 22px;
   }
 
-  .macro-column + .macro-column {
-    margin-top: 0;
+  .calendar-toolbar {
+    grid-template-columns: 90px 1fr 160px;
+  }
+
+  .new-event-btn {
+    width: 160px;
   }
 }
 
-@media (max-width: 1039px) {
-  .week-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (max-width: 900px) {
+  .figma-side-rail {
+    width: 60px;
   }
 
-  .hub-main {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .hub-shell {
-    width: min(100% - 20px, 100%);
-    padding-top: 18px;
+  .figma-side-rail button.active::before {
+    left: -4px;
   }
 
-  .hub-header {
-    padding: 20px;
+  .figma-top-bar {
+    left: 60px;
+    padding: 0 18px;
+  }
+
+  .profile-copy {
+    display: none;
+  }
+
+  .profile-button {
+    grid-template-columns: 44px 18px;
+  }
+
+  .figma-home-main {
+    padding: 88px 16px 22px 76px;
     flex-direction: column;
+    overflow-y: auto;
+    height: auto;
+    min-height: 100vh;
   }
 
-  .header-actions {
+  .figma-left-column {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .task-list-panel {
+    min-height: 360px;
+  }
+
+  .calendar-card {
+    min-width: 0;
+  }
+
+  .calendar-toolbar {
+    height: auto;
+    grid-template-columns: 1fr;
+    align-items: center;
+  }
+
+  .today-button,
+  .new-event-btn,
+  .month-switcher {
+    justify-self: stretch;
+  }
+
+  .new-event-btn {
     width: 100%;
   }
 
-  .header-actions .hub-btn {
-    flex: 1;
+  .calendar-grid {
+    min-height: 620px;
+    grid-template-rows: repeat(6, minmax(92px, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .figma-side-rail {
+    display: none;
   }
 
-  .macro-drawer.open .macro-grid {
-    padding: 0 16px 16px;
+  .figma-top-bar {
+    left: 0;
   }
 
-  .drawer-head,
-  .pomodoro-panel,
-  .tasks-panel {
-    padding: 18px;
+  .figma-home-main {
+    padding-left: 14px;
+    padding-right: 14px;
   }
 
-  .week-strip,
-  .countdown-form,
-  .pomodoro-stats,
-  .pomodoro-actions {
+  .timer-row > strong {
+    font-size: 32px;
+  }
+
+  .calendar-weekdays span {
+    font-size: 11px;
+  }
+
+  .day-number {
+    top: 10px;
+    right: 10px;
+    font-size: 13px;
+  }
+
+  .calendar-event {
+    padding-left: 8px;
+    font-size: 9px;
+  }
+
+  .task-modal-grid {
     grid-template-columns: 1fr;
-  }
-
-  .task-entry {
-    grid-template-columns: 1fr;
-  }
-
-  .day-card {
-    min-height: unset;
-  }
-
-  .timer-stage {
-    min-height: 300px;
-  }
-
-  .timer-copy {
-    padding: 36px;
   }
 }
 </style>

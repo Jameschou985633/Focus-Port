@@ -438,8 +438,11 @@ select.input option {
 /* ============================================
  * UTILITY CLASSES - 宸ュ叿绫? * ============================================ */
 
-/* Display */
-.hidden { display: none !important; }
+/* Display
+ * Keep `.hidden` compatible with responsive utility combos like `hidden xl:grid`.
+ * Using `!important` here breaks breakpoint overrides and can blank desktop layouts.
+ */
+.hidden { display: none; }
 .block { display: block; }
 .flex { display: flex; }
 .inline-flex { display: inline-flex; }

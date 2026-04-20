@@ -27,6 +27,8 @@ const hoveredCell = ref(null)
 const feedback = ref('')
 const isLoading = ref(false)
 const isSubmitting = ref(false)
+const GAIA_VISUAL_V2_KEY = 'gaiaVisualV2'
+const gaiaVisualV2 = ref(true)
 
 const zoomScale = ref(1)
 const baseFitScale = ref(1)
@@ -74,6 +76,49 @@ const gridCells = computed(() => {
     }
   }
   return cells
+})
+
+const readGaiaVisualV2Flag = () => {
+  if (typeof window === 'undefined') return true
+  const raw = window.localStorage.getItem(GAIA_VISUAL_V2_KEY)
+  if (raw === null) return true
+  const normalized = String(raw).trim().toLowerCase()
+  return !['0', 'false', 'off', 'legacy'].includes(normalized)
+}
+
+const syncGaiaVisualV2 = () => {
+  gaiaVisualV2.value = readGaiaVisualV2Flag()
+}
+
+const roadAxes = computed(() => {
+  const middle = Math.floor(gridConfig.value.cols / 2)
+  return new Set([middle - 1, middle, middle + 1])
+})
+
+const isRoadCell = (x, y) => (
+  roadAxes.value.has(x) || roadAxes.value.has(y)
+)
+
+const isIntersectionCell = (x, y) => (
+  roadAxes.value.has(x) && roadAxes.value.has(y)
+)
+
+const isCrosswalkCell = (x, y) => {
+  if (isIntersectionCell(x, y)) return false
+  const roadEvery = 5
+  if (roadAxes.value.has(x)) {
+    return y % roadEvery === 0
+  }
+  if (roadAxes.value.has(y)) {
+    return x % roadEvery === 0
+  }
+  return false
+}
+
+const cellVisualClasses = (cell) => ({
+  road: isRoadCell(cell.x, cell.y),
+  intersection: isIntersectionCell(cell.x, cell.y),
+  crosswalk: isCrosswalkCell(cell.x, cell.y)
 })
 
 const toIso = (x, y) => ({
@@ -261,7 +306,7 @@ const removeSelectedPlacedItem = async () => {
     inventoryStore.handlePlacedItemRemoval(selectedPlacedItem.value)
     await inventoryStore.refreshInventory(username.value)
     selectedPlacedId.value = ''
-    feedback.value = '该全息建筑已回收到背包。'
+    feedback.value = '该建筑已回收到背包。'
   } catch (error) {
     feedback.value = error.response?.data?.detail || '移除失败，请稍后再试。'
   }
@@ -287,7 +332,7 @@ watch(activePlacementItem, (nextItem) => {
     feedback.value = ''
     return
   }
-  feedback.value = `正在为 ${nextItem.nameCn || nextItem.name} 准备 GAIA 全息放置。`
+  feedback.value = `正在为 ${nextItem.nameCn || nextItem.name} 准备盖亚演算舱放置。`
 })
 
 const computeFitScale = () => {
@@ -334,7 +379,15 @@ const handleStageWheel = (event) => {
   zoomScale.value = Math.max(ZOOM_MIN, Math.min(zoomScale.value + delta, ZOOM_MAX))
 }
 
+const handleStorageSync = (event) => {
+  if (!event || event.key === GAIA_VISUAL_V2_KEY) {
+    syncGaiaVisualV2()
+  }
+}
+
 onMounted(async () => {
+  syncGaiaVisualV2()
+  window.addEventListener('storage', handleStorageSync)
   isLoading.value = true
   await Promise.all([
     loadManifest(),
@@ -350,6 +403,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('storage', handleStorageSync)
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
@@ -358,304 +412,134 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="iso-page">
-    <header class="iso-header kenney-hud-panel">
-      <div class="header-copy">
-        <span class="eyebrow">EARTH SIMULATOR · GAIA</span>
-        <h1>GAIA 等距投影城市</h1>
-        <p>20x20 等距网格已上线。鼠标位置会实时换算成 Grid X / Grid Y，并把全息资产吸附到网格中心。</p>
-      </div>
+  <div class="iso-page iso-page-v2">
+    <div class="iso-stage-wrap iso-stage-wrap-v2">
+      <div v-if="isLoading" class="stage-loading kenney-hud-panel">正在同步 GAIA 网格...</div>
 
-      <div class="header-actions">
-        <div class="metric-chip">
-          <span>维度</span>
-          <strong>{{ dimensionStore.currentDimensionLabel }}</strong>
-        </div>
-        <div class="metric-chip" v-if="hoveredCell">
-          <span>光标</span>
-          <strong>{{ hoveredCell.x }}, {{ hoveredCell.y }}</strong>
-        </div>
-        <button type="button" class="ghost-btn" @click="openShop">打开商店</button>
-        <button type="button" class="ghost-btn accent" @click="switchToPhysical">切换到 PHYSICAL</button>
-      </div>
-    </header>
-
-    <section class="iso-layout">
-      <aside class="command-panel kenney-hud-panel">
-        <div class="panel-block">
-          <span class="panel-label">网格状态</span>
-          <strong>{{ gridConfig.cols }} x {{ gridConfig.rows }}</strong>
-          <p>屏幕坐标会在当前等距平面上反算成网格坐标，再做占地与重叠校验。</p>
+      <template v-else>
+        <div class="zoom-bar zoom-bar-v2">
+          <button type="button" class="zoom-btn" :disabled="zoomScale <= ZOOM_MIN" @click="zoomOut">&minus;</button>
+          <span class="zoom-label">{{ Math.round(zoomScale * 100) }}%</span>
+          <button type="button" class="zoom-btn" :disabled="zoomScale >= ZOOM_MAX" @click="zoomIn">&plus;</button>
+          <button type="button" class="zoom-btn reset" @click="zoomReset">适配</button>
         </div>
 
-        <div class="panel-block">
-          <span class="panel-label">放置状态</span>
-          <template v-if="activePlacementItem">
-            <strong>{{ activePlacementItem.nameCn || activePlacementItem.name }}</strong>
-            <p>占地 {{ placementFootprint.width }} x {{ placementFootprint.height }}</p>
-            <p>{{ previewValid ? '当前位置可部署' : '当前位置不可部署' }}</p>
-            <button type="button" class="panel-btn" @click="inventoryStore.cancelPlacement()">取消放置</button>
-          </template>
-          <template v-else>
-            <strong>等待背包指令</strong>
-            <p>从右下角背包选择一个 GAIA 资产，幽灵预览就会跟随鼠标进入部署模式。</p>
-          </template>
-        </div>
-
-        <div class="panel-block">
-          <span class="panel-label">已选全息资产</span>
-          <template v-if="selectedPlacedItem">
-            <strong>{{ selectedPlacedItem.nameCn || selectedPlacedItem.name }}</strong>
-            <p>Grid {{ selectedPlacedItem.position.gridX }}, {{ selectedPlacedItem.position.gridY }}</p>
-            <button type="button" class="panel-btn danger" @click="removeSelectedPlacedItem">移回背包</button>
-          </template>
-          <template v-else>
-            <strong>暂无选中资产</strong>
-            <p>点击场景中的已放置建筑或车辆，可以查看并回收到背包。</p>
-          </template>
-        </div>
-
-        <p v-if="feedback" class="feedback-line">{{ feedback }}</p>
-      </aside>
-
-      <div class="iso-stage-wrap">
-        <div v-if="isLoading" class="stage-loading kenney-hud-panel">正在同步 GAIA 全息网格...</div>
-
-        <template v-else>
-          <div class="zoom-bar">
-            <button type="button" class="zoom-btn" :disabled="zoomScale <= ZOOM_MIN" @click="zoomOut">&minus;</button>
-            <span class="zoom-label">{{ Math.round(zoomScale * 100) }}%</span>
-            <button type="button" class="zoom-btn" :disabled="zoomScale >= ZOOM_MAX" @click="zoomIn">&plus;</button>
-            <button type="button" class="zoom-btn reset" @click="zoomReset">适配</button>
-          </div>
-
+        <div
+          ref="stageRef"
+          class="iso-stage kenney-hud-panel iso-stage-v2"
+          @mousemove="handleScenePointerMove"
+          @mouseleave="clearHoveredCell"
+          @click="placeCurrentItem"
+          @wheel="handleStageWheel"
+        >
           <div
-            ref="stageRef"
-            class="iso-stage kenney-hud-panel"
-            @mousemove="handleScenePointerMove"
-            @mouseleave="clearHoveredCell"
-            @click="placeCurrentItem"
-            @wheel="handleStageWheel"
+            class="scene-surface-wrapper"
+            :style="{
+              width: `${sceneWidth * zoomScale}px`,
+              height: `${sceneHeight * zoomScale}px`
+            }"
           >
             <div
-              class="scene-surface-wrapper"
+              class="scene-surface"
               :style="{
-                width: `${sceneWidth * zoomScale}px`,
-                height: `${sceneHeight * zoomScale}px`
+                width: `${sceneWidth}px`,
+                height: `${sceneHeight}px`,
+                transform: `scale(${zoomScale})`,
+                transformOrigin: 'top left'
               }"
             >
               <div
-                class="scene-surface"
-                :style="{
-                  width: `${sceneWidth}px`,
-                  height: `${sceneHeight}px`,
-                  transform: `scale(${zoomScale})`,
-                  transformOrigin: 'top left'
-                }"
+                v-for="cell in gridCells"
+                :key="cell.key"
+                class="iso-cell"
+                :class="[{ hovered: hoveredCell?.x === cell.x && hoveredCell?.y === cell.y }, cellVisualClasses(cell)]"
+                :style="gridCellStyle(cell)"
               >
-                <div
-                  v-for="cell in gridCells"
-                  :key="cell.key"
-                  class="iso-cell"
-                  :class="{ hovered: hoveredCell?.x === cell.x && hoveredCell?.y === cell.y }"
-                  :style="gridCellStyle(cell)"
-                >
-                  <span class="grid-index">{{ cell.x }},{{ cell.y }}</span>
-                </div>
-
-                <div
-                  v-for="cell in previewCells"
-                  :key="`preview-${cell.x}-${cell.y}`"
-                  class="preview-footprint"
-                  :class="{ invalid: !previewValid }"
-                  :style="footprintStyle(cell)"
-                ></div>
-
-                <button
-                  v-if="activePlacementItem && previewSpriteStyle"
-                  type="button"
-                  class="placed-sprite ghost"
-                  :class="{ invalid: !previewValid }"
-                  :style="previewSpriteStyle"
-                  @click.stop="placeCurrentItem"
-                >
-                  <img
-                    :src="activePlacementItem.previewPath || activePlacementItem.spritePath"
-                    :alt="activePlacementItem.nameCn || activePlacementItem.name"
-                  />
-                  <span class="placed-label">{{ activePlacementItem.nameCn || activePlacementItem.name }}</span>
-                </button>
-
-                <button
-                  v-for="item in gaiaPlacedItems"
-                  :key="item.id"
-                  type="button"
-                  class="placed-sprite"
-                  :class="{ selected: selectedPlacedId === item.id, vehicle: item.subcategory === 'vehicles' }"
-                  :style="placedItemStyle(item)"
-                  @click.stop="selectedPlacedId = item.id"
-                >
-                  <img :src="item.spritePath || item.previewPath || item.assetPath" :alt="item.nameCn || item.name" />
-                  <span class="placed-label">{{ item.nameCn || item.name }}</span>
-                </button>
+                <span class="grid-index">{{ cell.x }},{{ cell.y }}</span>
               </div>
+
+              <div
+                v-for="cell in previewCells"
+                :key="`preview-${cell.x}-${cell.y}`"
+                class="preview-footprint"
+                :class="{ invalid: !previewValid }"
+                :style="footprintStyle(cell)"
+              ></div>
+
+              <button
+                v-if="activePlacementItem && previewSpriteStyle"
+                type="button"
+                class="placed-sprite ghost"
+                :class="{ invalid: !previewValid }"
+                :style="previewSpriteStyle"
+                @click.stop="placeCurrentItem"
+              >
+                <img
+                  :src="activePlacementItem.previewPath || activePlacementItem.spritePath"
+                  :alt="activePlacementItem.nameCn || activePlacementItem.name"
+                />
+                <span class="placed-label">{{ activePlacementItem.nameCn || activePlacementItem.name }}</span>
+              </button>
+
+              <button
+                v-for="item in gaiaPlacedItems"
+                :key="item.id"
+                type="button"
+                class="placed-sprite"
+                :class="{ selected: selectedPlacedId === item.id, vehicle: item.subcategory === 'vehicles' }"
+                :style="placedItemStyle(item)"
+                @click.stop="selectedPlacedId = item.id"
+              >
+                <img :src="item.spritePath || item.previewPath || item.assetPath" :alt="item.nameCn || item.name" />
+                <span class="placed-label">{{ item.nameCn || item.name }}</span>
+              </button>
             </div>
           </div>
-        </template>
-      </div>
-    </section>
+        </div>
+      </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .iso-page {
+  position: relative;
+  width: 100vw;
   min-height: 100vh;
-  padding: 18px;
-  box-sizing: border-box;
-  color: #eef7ff;
-  background:
-    radial-gradient(circle at 20% 16%, rgba(47, 216, 255, 0.12), transparent 18%),
-    radial-gradient(circle at 82% 12%, rgba(109, 92, 255, 0.16), transparent 20%),
-    linear-gradient(180deg, #081526 0%, #0a192f 100%);
-}
-
-.iso-header,
-.command-panel,
-.iso-stage {
-  border-radius: 24px;
-}
-
-.iso-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 18px;
-  padding: 18px 20px;
-}
-
-.eyebrow,
-.panel-label {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.22em;
-  color: rgba(156, 230, 255, 0.84);
-  text-transform: uppercase;
-}
-
-.header-copy h1 {
-  margin: 8px 0 6px;
-  font-size: 32px;
-}
-
-.header-copy p,
-.panel-block p {
-  margin: 0;
-  color: rgba(230, 246, 255, 0.72);
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.metric-chip,
-.ghost-btn,
-.panel-btn {
-  min-height: 42px;
-  border-radius: 999px;
-  padding: 0 16px;
-  border: 1px solid rgba(115, 224, 255, 0.2);
-  background: rgba(8, 16, 30, 0.7);
-  color: #eef7ff;
-}
-
-.metric-chip {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-}
-
-.metric-chip span {
-  font-size: 11px;
-  color: rgba(230, 246, 255, 0.68);
-}
-
-.ghost-btn,
-.panel-btn {
-  cursor: pointer;
-}
-
-.ghost-btn.accent,
-.panel-btn {
-  background: linear-gradient(180deg, #2fd8ff, #2d74ff);
-  border-color: transparent;
-}
-
-.panel-btn.danger {
-  background: linear-gradient(180deg, #ff728d, #e3446c);
-}
-
-.iso-layout {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 18px;
-}
-
-.command-panel {
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.panel-block {
-  padding: 16px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.panel-block strong {
-  display: block;
-  margin: 6px 0 8px;
-  font-size: 20px;
-}
-
-.feedback-line {
-  margin: 0;
-  color: #9ce6ff;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
 }
 
 .iso-stage-wrap {
-  min-width: 0;
+  position: fixed;
+  inset: 0;
 }
 
-.stage-loading,
-.iso-stage {
-  min-height: max(400px, calc(100vh - 220px));
-  padding: 18px;
+.iso-stage-wrap .stage-loading,
+.iso-stage-wrap .iso-stage {
+  min-height: 100vh;
+  height: 100vh;
+  border-radius: 0;
 }
 
 .stage-loading {
   display: grid;
   place-items: center;
   font-size: 18px;
+  color: #eef7ff;
 }
 
 .iso-stage {
   overflow: auto;
-  background:
-    radial-gradient(circle at 50% 0%, rgba(47, 216, 255, 0.08), transparent 40%),
-    linear-gradient(180deg, rgba(10, 25, 47, 0.92), rgba(6, 11, 22, 0.96));
+  padding: 12px;
+  background: transparent;
 }
 
 .scene-surface-wrapper {
   position: relative;
   margin: 0 auto;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .scene-surface {
@@ -686,14 +570,53 @@ onUnmounted(() => {
 
 .iso-cell::before {
   background:
-    linear-gradient(180deg, rgba(229, 234, 247, 0.94), rgba(191, 204, 224, 0.84)),
-    #d8deea;
-  border: 1px solid rgba(12, 27, 59, 0.26);
-  box-shadow: 0 12px 18px rgba(0, 0, 0, 0.16);
+    linear-gradient(180deg, rgba(20, 35, 55, 0.92), rgba(12, 24, 42, 0.94)),
+    #0e1e32;
+  border: 1px solid rgba(115, 224, 255, 0.12);
+  box-shadow: 0 7px 16px rgba(0, 0, 0, 0.3);
 }
 
 .iso-cell.hovered::before {
-  box-shadow: 0 0 0 1px rgba(115, 224, 255, 0.46), 0 0 28px rgba(47, 216, 255, 0.18);
+  box-shadow: 0 0 0 1px rgba(115, 224, 255, 0.5), 0 0 28px rgba(47, 216, 255, 0.25);
+}
+
+.iso-cell.road::before {
+  background:
+    linear-gradient(180deg, rgba(14, 22, 36, 0.98), rgba(8, 16, 28, 0.98)),
+    #0a1420;
+  border: 1px solid rgba(115, 224, 255, 0.08);
+}
+
+.iso-cell.intersection::before {
+  background:
+    linear-gradient(180deg, rgba(12, 20, 32, 0.98), rgba(6, 14, 24, 0.98)),
+    #081220;
+}
+
+.iso-cell.road::after {
+  content: '';
+  position: absolute;
+  inset: 36% 23%;
+  transform: skewY(-27deg) rotate(45deg);
+  border-radius: 999px;
+  background: rgba(115, 224, 255, 0.3);
+  box-shadow: 0 0 7px rgba(115, 224, 255, 0.2);
+  pointer-events: none;
+}
+
+.iso-cell.intersection::after {
+  background: rgba(115, 224, 255, 0.12);
+}
+
+.iso-cell.crosswalk::after {
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(242, 248, 255, 0.78) 0,
+    rgba(242, 248, 255, 0.78) 8%,
+    transparent 8%,
+    transparent 16%
+  );
+  inset: 33% 16%;
 }
 
 .grid-index {
@@ -702,20 +625,20 @@ onUnmounted(() => {
   top: 50%;
   transform: translate(-50%, -50%);
   font-size: 10px;
-  color: rgba(8, 16, 30, 0.44);
+  color: rgba(115, 224, 255, 0.35);
 }
 
 .preview-footprint {
   width: 96px;
   height: 48px;
-  background: rgba(47, 216, 255, 0.26);
-  box-shadow: 0 0 18px rgba(47, 216, 255, 0.14);
+  background: rgba(61, 235, 167, 0.36);
+  box-shadow: 0 0 22px rgba(61, 235, 167, 0.26);
   pointer-events: none;
 }
 
 .preview-footprint.invalid {
-  background: rgba(255, 114, 141, 0.28);
-  box-shadow: 0 0 18px rgba(255, 114, 141, 0.14);
+  background: rgba(255, 106, 112, 0.38);
+  box-shadow: 0 0 22px rgba(255, 106, 112, 0.24);
 }
 
 .placed-sprite {
@@ -729,8 +652,7 @@ onUnmounted(() => {
 .placed-sprite img {
   width: 120px;
   image-rendering: pixelated;
-  mix-blend-mode: screen;
-  filter: hue-rotate(178deg) saturate(1.25) brightness(1.16) drop-shadow(0 18px 26px rgba(0, 0, 0, 0.28)) drop-shadow(0 0 14px rgba(88, 228, 255, 0.22));
+  filter: saturate(1.06) brightness(1.02) drop-shadow(0 10px 18px rgba(22, 36, 52, 0.36));
 }
 
 .placed-sprite.vehicle img {
@@ -746,7 +668,7 @@ onUnmounted(() => {
 }
 
 .placed-sprite.selected img {
-  filter: hue-rotate(178deg) saturate(1.25) brightness(1.16) drop-shadow(0 0 18px rgba(47, 216, 255, 0.45));
+  filter: saturate(1.12) brightness(1.06) drop-shadow(0 0 14px rgba(86, 173, 255, 0.7));
 }
 
 .placed-label {
@@ -754,50 +676,25 @@ onUnmounted(() => {
   margin-top: 6px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(7, 16, 34, 0.72);
+  background: rgba(7, 16, 34, 0.85);
   font-size: 11px;
   color: #dff4ff;
   white-space: nowrap;
-}
-
-@media (max-width: 1100px) {
-  .iso-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 768px) {
-  .iso-page {
-    padding: 12px;
-    padding-bottom: 240px;
-  }
-
-  .iso-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .header-actions {
-    justify-content: flex-start;
-  }
-
-  .zoom-bar {
-    position: sticky;
-    top: 0;
-    z-index: 4;
-  }
+  border: 1px solid rgba(115, 224, 255, 0.2);
 }
 
 .zoom-bar {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 6;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(8, 18, 44, 0.92);
-  border: 1px solid rgba(115, 224, 255, 0.18);
-  width: fit-content;
+  background: rgba(7, 16, 34, 0.9);
+  border: 1px solid rgba(115, 224, 255, 0.3);
 }
 
 .zoom-btn {
@@ -835,5 +732,12 @@ onUnmounted(() => {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: rgba(156, 230, 255, 0.84);
+}
+
+@media (max-width: 768px) {
+  .zoom-bar {
+    top: 10px;
+    right: 10px;
+  }
 }
 </style>

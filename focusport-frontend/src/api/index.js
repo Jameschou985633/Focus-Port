@@ -53,7 +53,15 @@ export const focusApi = {
 }
 
 export const taskApi = {
-  add: (username, content) => api.post('/api/todo/add', { username, content }),
+  add: (username, content, meta = {}) => api.post('/api/todo/add', {
+    username,
+    content,
+    scheduled_date: meta.scheduledDate || meta.scheduled_date || '',
+    scheduled_time: meta.scheduledTime || meta.scheduled_time || '',
+    status: meta.status || 'todo',
+    category: meta.category || '',
+    accent: meta.accent || '#4880FF'
+  }),
   list: (username) => api.get(`/api/todo/${username}`),
   toggle: (taskId, username) => api.post('/api/todo/toggle', { task_id: taskId, username }),
   delete: (taskId, username) => api.post('/api/todo/delete', { task_id: taskId, username }),
@@ -74,7 +82,15 @@ export const itemApi = {
 export const phoneApi = {
   report: (username, usageMinutes, category, notes) =>
     api.post('/api/phone-usage/report', { username, usage_minutes: usageMinutes, category, notes }),
-  stats: (username, days) => api.get(`/api/phone-usage/stats/${username}`, { params: { days } })
+  stats: (username, days) => api.get(`/api/phone-usage/stats/${username}`, { params: { days } }),
+  analyzeScreenshot: (file, username) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('username', username)
+    return api.post('/api/phone-usage/analyze-screenshot', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  }
 }
 
 export const aiApi = {
@@ -82,7 +98,8 @@ export const aiApi = {
     api.post('/api/ai/chat', { username, message, conversation_id: conversationId }),
   history: (username, conversationId) =>
     api.get(`/api/ai/history/${username}`, { params: { conversation_id: conversationId } }),
-  suggestions: (username) => api.get(`/api/ai/suggestions/${username}`)
+  suggestions: (username) => api.get(`/api/ai/suggestions/${username}`),
+  clearHistory: (username) => api.delete(`/api/ai/history/${username}`)
 }
 
 export const planApi = {
@@ -92,7 +109,7 @@ export const planApi = {
   update: (planId, data) => api.put(`/api/plans/${planId}`, data),
   delete: (planId, username) => api.delete(`/api/plans/${planId}`, { data: { username } }),
   updateStage: (planId, stageId, data) => api.put(`/api/plans/${planId}/stages/${stageId}`, data),
-  completeTask: (taskId, actualMinutes = 0) => api.post(`/api/tasks/${taskId}/complete`, { username: '', actual_minutes: actualMinutes }),
+  completeTask: (taskId, username, actualMinutes = 0) => api.post(`/api/tasks/${taskId}/complete`, { username, actual_minutes: actualMinutes }),
   aiGenerate: (data) => api.post('/api/plans/ai/generate-stages', data),
   aiChat: (data) => api.post('/api/plans/ai/chat', data),
   daily: (username) => api.get(`/api/plans/daily/${username}`)
@@ -130,6 +147,7 @@ export const islandApi = {
   placeDecoration: (username, decorationId, position) =>
     api.put('/api/island/decorations/place', { username, decoration_id: decorationId, position }),
   skins: () => api.get('/api/island/skins'),
+  userSkins: (username) => api.get(`/api/island/skins/${username}`),
   buySkin: (username, skinId) => api.post('/api/island/skins/buy', { username, skin_id: skinId }),
   activateSkin: (username, skinId) => api.put('/api/island/skins/activate', { username, skin_id: skinId })
 }
@@ -141,7 +159,10 @@ export const focusEnergyApi = {
 
 export const shopApi = {
   items: () => api.get('/api/shop/items'),
-  buy: (username, itemId) => api.post('/api/shop/buy', { username, item_id: itemId })
+  buy: (username, itemId) => api.post('/api/shop/buy', { username, item_id: itemId }),
+  diamonds: (username) => api.get(`/api/shop/diamonds/${username}`),
+  studyroomItems: () => api.get('/api/studyroom/items'),
+  buyStudyroom: (username, itemId) => api.post('/api/studyroom/buy', { username, item_id: itemId })
 }
 
 export const inventoryApi = {
@@ -250,6 +271,96 @@ export const createGreenhouseWebSocket = (roomId) => {
       : 'ws://127.0.0.1:8000'
   }
   return new WebSocket(`${wsBase}/ws/greenhouse/${roomId}`)
+}
+
+export const createGomokuWebSocket = (gameId) => {
+  const apiBase = import.meta.env.VITE_API_BASE_URL
+  let wsBase
+  if (apiBase) {
+    wsBase = apiBase.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
+  } else {
+    wsBase = import.meta.env.PROD
+      ? 'wss://focusport-backend.onrender.com'
+      : 'ws://127.0.0.1:8000'
+  }
+  return new WebSocket(`${wsBase}/ws/gomoku/${gameId}`)
+}
+
+export const createArcadeWebSocket = (roomCode) => {
+  const apiBase = import.meta.env.VITE_API_BASE_URL
+  let wsBase
+  if (apiBase) {
+    wsBase = apiBase.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
+  } else {
+    wsBase = import.meta.env.PROD
+      ? 'wss://focusport-backend.onrender.com'
+      : 'ws://127.0.0.1:8000'
+  }
+  return new WebSocket(`${wsBase}/ws/arcade/${roomCode}`)
+}
+
+export const gomokuApi = {
+  list: () => api.get('/api/gomoku/list'),
+  get: (gameId) => api.get(`/api/gomoku/${gameId}`),
+  create: (username) => api.post('/api/gomoku/create', { username }),
+  join: (roomCode, username) => api.post('/api/gomoku/join', { room_code: roomCode, username }),
+  move: (gameId, username, row, col) => api.post('/api/gomoku/move', { game_id: gameId, username, row, col }),
+  surrender: (gameId, username) => api.post('/api/gomoku/surrender', { game_id: gameId, username })
+}
+
+export const arcadeApi = {
+  play: (username, game) => api.post('/api/arcade/play', { username, game }),
+  join: (roomCode, username) => api.post('/api/arcade/join', { room_code: roomCode, username }),
+  room: (roomCode) => api.get(`/api/arcade/room/${roomCode}`)
+}
+
+export const messageApi = {
+  list: (username, category = '') => api.get(`/api/messages/${username}`, { params: { category } }),
+  unread: (username) => api.get(`/api/messages/${username}/unread`),
+  send: (sender, receiver, title, content, category = 'friend') =>
+    api.post('/api/messages', { sender, receiver, title, content, category }),
+  markRead: (msgId) => api.post(`/api/messages/${msgId}/read`),
+  markAllRead: (username) => api.post(`/api/messages/read-all/${username}`),
+  delete: (msgId) => api.delete(`/api/messages/${msgId}`)
+}
+
+export const circleApi = {
+  posts: (username, filterType, page, pageSize = 20) =>
+    api.get('/api/circle/posts', { params: { username, filter_type: filterType, page, page_size: pageSize } }),
+  create: (username, content, imageUrls, visibility) =>
+    api.post('/api/circle/posts', { username, content, image_urls: imageUrls, visibility }),
+  delete: (postId, username) =>
+    api.delete(`/api/circle/posts/${postId}`, { params: { username } }),
+  like: (postId, username) =>
+    api.post(`/api/circle/posts/${postId}/like`, { post_id: postId, username }),
+  comments: (postId) =>
+    api.get(`/api/circle/posts/${postId}/comments`),
+  addComment: (postId, username, content) =>
+    api.post(`/api/circle/posts/${postId}/comments`, { post_id: postId, username, content }),
+  uploadImage: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/api/circle/upload-image', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  }
+}
+
+export const pkApi = {
+  active: (username) => api.get(`/api/pk/active/${username}`),
+  create: (creator, opponent, type, duration, targetValue) =>
+    api.post('/api/pk/create', { creator, opponent, type, duration, target_value: targetValue }),
+  accept: (pkId, username) => api.post('/api/pk/accept', { pk_id: pkId, username }),
+  decline: (pkId, username) => api.post('/api/pk/decline', { pk_id: pkId, username })
+}
+
+export const examApi = {
+  list: () => api.get('/api/exams'),
+  submit: (examCode, username, answers, timeUsed) =>
+    api.post('/api/submit_exam', { exam_code: examCode, username, answers, time_used: timeUsed }),
+  gradingStatus: (submissionId) => api.get(`/api/exam/grading_status/${submissionId}`),
+  aiAnalysis: (question, userAnswer, correctAnswer, context) =>
+    api.post('/api/exam/ai_analysis', { question, user_answer: userAnswer, correct_answer: correctAnswer, context })
 }
 
 export default api

@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import axios from 'axios'
+import { phoneApi, growthApi } from '../api'
 
 const props = defineProps({
   username: { type: String, required: true }
@@ -41,13 +41,7 @@ const analyzeScreenshot = async () => {
 
   isAnalyzing.value = true
   try {
-    const formData = new FormData()
-    formData.append('file', selectedFile.value)
-    formData.append('username', props.username)
-
-    const res = await axios.post('http://127.0.0.1:8000/api/phone-usage/analyze-screenshot', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
+    const res = await phoneApi.analyzeScreenshot(selectedFile.value, props.username)
 
     analyzeResult.value = res.data
 
@@ -76,19 +70,10 @@ const submitReport = async () => {
 
   isAnalyzing.value = true
   try {
-    await axios.post('http://127.0.0.1:8000/api/phone-usage/report', {
-      username: props.username,
-      usage_minutes: minutes,
-      category: category.value,
-      notes: notes.value,
-      screenshot_data: previewImage.value
-    })
+    await phoneApi.report(props.username, minutes, category.value, notes.value)
 
     // 更新自律指数
-    await axios.post('http://127.0.0.1:8000/api/growth/update-discipline', {
-      username: props.username,
-      phone_minutes: minutes
-    })
+    await growthApi.updateDiscipline(props.username, minutes)
 
     showSuccess.value = true
     emit('reported')

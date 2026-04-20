@@ -1,4 +1,4 @@
-import json
+﻿import json
 import math
 import os
 import re
@@ -1031,7 +1031,9 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS Todo_Tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, content TEXT, is_completed BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, ai_score REAL DEFAULT 0, proof_url TEXT DEFAULT '',
-                score_updated_at TIMESTAMP, ai_feedback TEXT DEFAULT ''
+                score_updated_at TIMESTAMP, ai_feedback TEXT DEFAULT '',
+                scheduled_date TEXT DEFAULT '', scheduled_time TEXT DEFAULT '', status TEXT DEFAULT 'todo',
+                category TEXT DEFAULT '', accent TEXT DEFAULT '#4880FF'
             );
             CREATE TABLE IF NOT EXISTS Phone_Usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, usage_minutes INTEGER NOT NULL,
@@ -1181,6 +1183,11 @@ def init_db() -> None:
         ensure_column(conn, "Focus_Sessions", "final_energy", "INTEGER DEFAULT 0")
         ensure_column(conn, "Focus_Sessions", "ai_feedback", "TEXT DEFAULT ''")
         ensure_column(conn, "Focus_Sessions", "evaluation_source", "TEXT DEFAULT 'fallback'")
+        ensure_column(conn, "Todo_Tasks", "scheduled_date", "TEXT DEFAULT ''")
+        ensure_column(conn, "Todo_Tasks", "scheduled_time", "TEXT DEFAULT ''")
+        ensure_column(conn, "Todo_Tasks", "status", "TEXT DEFAULT 'todo'")
+        ensure_column(conn, "Todo_Tasks", "category", "TEXT DEFAULT ''")
+        ensure_column(conn, "Todo_Tasks", "accent", "TEXT DEFAULT '#4880FF'")
         if "achievement_code" in table_columns(conn, "Achievements"):
             conn.execute("UPDATE Achievements SET code = achievement_code WHERE (code IS NULL OR code = '')")
         conn.execute("UPDATE Unified_Shop_Items SET dimension = '3D' WHERE dimension IS NULL OR dimension = ''")
@@ -1196,6 +1203,11 @@ def init_db() -> None:
         conn.execute("UPDATE Focus_Sessions SET final_energy = 0 WHERE final_energy IS NULL OR final_energy < 0")
         conn.execute("UPDATE Focus_Sessions SET ai_feedback = '' WHERE ai_feedback IS NULL")
         conn.execute("UPDATE Focus_Sessions SET evaluation_source = 'fallback' WHERE evaluation_source IS NULL OR evaluation_source = ''")
+        conn.execute("UPDATE Todo_Tasks SET scheduled_date = '' WHERE scheduled_date IS NULL")
+        conn.execute("UPDATE Todo_Tasks SET scheduled_time = '' WHERE scheduled_time IS NULL")
+        conn.execute("UPDATE Todo_Tasks SET category = '' WHERE category IS NULL")
+        conn.execute("UPDATE Todo_Tasks SET accent = '#4880FF' WHERE accent IS NULL OR accent = ''")
+        conn.execute("UPDATE Todo_Tasks SET status = CASE WHEN is_completed = 1 THEN 'done' ELSE 'todo' END WHERE status IS NULL OR status = ''")
         ensure_user(conn, "guest")
         sync_kenney_city_items(conn)
         sync_isometric_items(conn)
@@ -1260,11 +1272,80 @@ class FocusCompleteRequest(BaseModel):
 class TodoAddRequest(BaseModel):
     username: str
     content: str
+    scheduled_date: str = ""
+    scheduled_time: str = ""
+    status: str = "todo"
+    category: str = ""
+    accent: str = "#4880FF"
 
 
 class TodoActionRequest(BaseModel):
     task_id: int
     username: str
+
+
+TODO_STATUS_VALUES = {"todo", "in_progress", "done"}
+TODO_ACCENT_FALLBACK = "#4880FF"
+
+
+def normalize_todo_date(value: str = "") -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        raise HTTPException(status_code=422, detail="scheduled_date must use YYYY-MM-DD")
+    try:
+        date.fromisoformat(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="scheduled_date must be a valid date") from exc
+    return raw
+
+
+def normalize_todo_time(value: str = "") -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if not re.fullmatch(r"\d{2}:\d{2}", raw):
+        raise HTTPException(status_code=422, detail="scheduled_time must use HH:MM")
+    hour, minute = (int(part) for part in raw.split(":"))
+    if hour > 23 or minute > 59:
+        raise HTTPException(status_code=422, detail="scheduled_time must be a valid 24-hour time")
+    return raw
+
+
+def normalize_todo_status(value: str = "todo", completed: bool = False) -> str:
+    raw = str(value or "").strip().lower().replace("-", "_")
+    if completed:
+        return "done"
+    return raw if raw in TODO_STATUS_VALUES and raw != "done" else "todo"
+
+
+def normalize_todo_accent(value: str = "") -> str:
+    raw = str(value or "").strip()
+    return raw if re.fullmatch(r"#[0-9A-Fa-f]{6}", raw) else TODO_ACCENT_FALLBACK
+
+
+def todo_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    completed = bool(row["is_completed"])
+    status = normalize_todo_status(row["status"], completed)
+    return {
+        "id": row["id"],
+        "content": row["content"] or "",
+        "title": row["content"] or "",
+        "is_completed": completed,
+        "isCompleted": completed,
+        "created_at": row["created_at"] or "",
+        "createdAt": row["created_at"] or "",
+        "ai_score": row["ai_score"] or 0,
+        "ai_feedback": row["ai_feedback"] or "",
+        "scheduled_date": row["scheduled_date"] or "",
+        "scheduledDate": row["scheduled_date"] or "",
+        "scheduled_time": row["scheduled_time"] or "",
+        "scheduledTime": row["scheduled_time"] or "",
+        "status": status,
+        "category": row["category"] or "",
+        "accent": normalize_todo_accent(row["accent"]),
+    }
 
 
 class PhoneUsageReportRequest(BaseModel):
@@ -1398,10 +1479,17 @@ class AIGeneratePlanRequest(BaseModel):
 
 
 class PlanChatRequest(BaseModel):
-    username: str
-    message: str
+    username: str = "guest"
+    message: str = ""
     plan_id: Optional[int] = None
     conversation_id: str = ""
+    # FocusHub decomposition payload (backward-compatible extension)
+    goal: str = ""
+    style: str = "balanced"
+    available_minutes: Optional[int] = None
+    weak_points: str = ""
+    system_prompt: str = ""
+    user_prompt: str = ""
 
 
 # ===== 学习计划辅助函数 =====
@@ -1838,7 +1926,69 @@ def ai_generate_stages(payload: AIGeneratePlanRequest) -> dict[str, Any]:
 
 @app.post("/api/plans/ai/chat")
 def plan_ai_chat(payload: PlanChatRequest) -> dict[str, Any]:
-    """对话式规划"""
+    """对话式规划（兼容 FocusHub AI 任务拆解请求）"""
+
+    def extract_steps_from_text(raw_text: str) -> list[dict[str, Any]]:
+        text = str(raw_text or "").strip()
+        if not text:
+            return []
+
+        # 支持 ```json ... ``` 或前后带解释文本的响应
+        text = re.sub(r"^\s*```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```\s*$", "", text, flags=re.IGNORECASE)
+        match = re.search(r"\[[\s\S]*\]", text)
+        if not match:
+            return []
+
+        try:
+            parsed = json.loads(match.group(0))
+        except Exception:
+            return []
+
+        if not isinstance(parsed, list):
+            return []
+
+        steps: list[dict[str, Any]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+
+            title = str(item.get("title") or item.get("task") or "").strip()
+            if not title:
+                continue
+
+            if item.get("estimatedPomodoros") is not None:
+                try:
+                    estimated = int(round(float(item.get("estimatedPomodoros"))))
+                except Exception:
+                    estimated = 1
+            elif item.get("minutes") is not None:
+                try:
+                    estimated = int(round(float(item.get("minutes")) / 25))
+                except Exception:
+                    estimated = 1
+            else:
+                estimated = 1
+            estimated = max(1, min(3, estimated))
+
+            steps.append({
+                "title": title,
+                "estimatedPomodoros": estimated,
+                "doneDefinition": str(item.get("doneDefinition") or item.get("done_definition") or "").strip(),
+                "reason": str(item.get("reason") or "").strip(),
+                "description": str(item.get("description") or "").strip(),
+                "difficulty": str(item.get("difficulty") or "medium").strip() or "medium",
+                "category": str(item.get("category") or "").strip()
+            })
+
+        return steps
+
+    planning_mode = bool(
+        str(payload.goal or "").strip()
+        or str(payload.system_prompt or "").strip()
+        or str(payload.user_prompt or "").strip()
+    )
+
     context_info = ""
     if payload.plan_id:
         with closing(get_conn()) as conn:
@@ -1846,24 +1996,47 @@ def plan_ai_chat(payload: PlanChatRequest) -> dict[str, Any]:
             if plan:
                 context_info = f"\n\n当前计划: {plan['title']}\n目标: {plan['goal']}\n进度: {plan['progress_percent']}%"
 
-    prompt = f"""你是一个学习规划助手，帮助用户制定和调整学习计划。
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        if planning_mode:
+            system_prompt = (payload.system_prompt or "").strip() or (
+                "你是任务拆解助手。请只输出 JSON 数组，不要输出 markdown 或解释。"
+                "每个元素至少包含 title、estimatedPomodoros(1-3)、doneDefinition、reason。"
+            )
+            user_prompt = (payload.user_prompt or "").strip() or (
+                f"目标: {payload.goal}\n"
+                f"风格: {payload.style}\n"
+                f"可用分钟: {payload.available_minutes}\n"
+                f"薄弱点: {payload.weak_points}\n"
+                "请只返回 JSON 数组。"
+            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        else:
+            prompt = f"""你是一个学习规划助手，帮助用户制定和调整学习计划。
 {context_info}
 
 用户消息: {payload.message}
 
 请给出有帮助的学习规划建议，保持回复简洁明了。"""
+            messages = [{"role": "user", "content": prompt}]
 
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=0.7
         )
         reply = response.choices[0].message.content or "抱歉，我暂时无法回答。"
+        if planning_mode:
+            return {"success": True, "reply": reply, "steps": extract_steps_from_text(reply)}
         return {"success": True, "reply": reply}
     except Exception as e:
+        if planning_mode:
+            return {"success": False, "reply": f"AI服务暂时不可用: {str(e)}", "steps": []}
         return {"success": False, "reply": f"AI服务暂时不可用: {str(e)}"}
 
 
@@ -2356,26 +2529,88 @@ def focus_history(username: str, limit: int = 10) -> dict[str, Any]:
 
 @app.post("/api/todo/add")
 def add_todo(payload: TodoAddRequest) -> dict[str, Any]:
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="content is required")
+
+    scheduled_date = normalize_todo_date(payload.scheduled_date)
+    scheduled_time = normalize_todo_time(payload.scheduled_time)
+    requested_status = str(payload.status or "todo").strip().lower().replace("-", "_")
+    status = "done" if requested_status == "done" else normalize_todo_status(requested_status)
+    accent = normalize_todo_accent(payload.accent)
     with closing(get_conn()) as conn:
         ensure_user(conn, payload.username)
-        cursor = conn.execute("INSERT INTO Todo_Tasks (username, content) VALUES (?, ?)", (payload.username, payload.content.strip()))
+        cursor = conn.execute(
+            """
+            INSERT INTO Todo_Tasks
+              (username, content, scheduled_date, scheduled_time, status, category, accent, is_completed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload.username,
+                content,
+                scheduled_date,
+                scheduled_time,
+                status,
+                str(payload.category or "").strip(),
+                accent,
+                1 if status == "done" else 0,
+            ),
+        )
+        task_id = cursor.lastrowid
+        row = conn.execute(
+            """
+            SELECT id, content, is_completed, created_at, ai_score, ai_feedback,
+                   scheduled_date, scheduled_time, status, category, accent
+            FROM Todo_Tasks WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
         conn.commit()
-    return {"success": True, "task_id": cursor.lastrowid}
+    return {"success": True, "task_id": task_id, "task": todo_row_to_dict(row)}
 
 
 @app.get("/api/todo/{username}")
 def list_todo(username: str) -> dict[str, Any]:
     with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT id, content, is_completed, created_at, ai_score, ai_feedback FROM Todo_Tasks WHERE username = ? ORDER BY is_completed ASC, id DESC", (username,)).fetchall()
-    return {"success": True, "tasks": [dict(row) for row in rows]}
+        rows = conn.execute(
+            """
+            SELECT id, content, is_completed, created_at, ai_score, ai_feedback,
+                   scheduled_date, scheduled_time, status, category, accent
+            FROM Todo_Tasks
+            WHERE username = ?
+            ORDER BY is_completed ASC, COALESCE(NULLIF(scheduled_date, ''), created_at) ASC, id DESC
+            """,
+            (username,),
+        ).fetchall()
+    return {"success": True, "tasks": [todo_row_to_dict(row) for row in rows]}
 
 
 @app.post("/api/todo/toggle")
 def toggle_todo(payload: TodoActionRequest) -> dict[str, Any]:
     with closing(get_conn()) as conn:
-        conn.execute("UPDATE Todo_Tasks SET is_completed = CASE WHEN is_completed = 1 THEN 0 ELSE 1 END WHERE id = ? AND username = ?", (payload.task_id, payload.username))
+        row = conn.execute(
+            "SELECT is_completed FROM Todo_Tasks WHERE id = ? AND username = ?",
+            (payload.task_id, payload.username),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="task not found")
+
+        next_completed = 0 if int(row["is_completed"] or 0) == 1 else 1
+        conn.execute(
+            "UPDATE Todo_Tasks SET is_completed = ?, status = ? WHERE id = ? AND username = ?",
+            (next_completed, "done" if next_completed else "todo", payload.task_id, payload.username),
+        )
+        updated = conn.execute(
+            """
+            SELECT id, content, is_completed, created_at, ai_score, ai_feedback,
+                   scheduled_date, scheduled_time, status, category, accent
+            FROM Todo_Tasks WHERE id = ? AND username = ?
+            """,
+            (payload.task_id, payload.username),
+        ).fetchone()
         conn.commit()
-    return {"success": True}
+    return {"success": True, "task": todo_row_to_dict(updated)}
 
 
 @app.post("/api/todo/delete")

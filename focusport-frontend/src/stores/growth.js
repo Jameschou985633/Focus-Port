@@ -1,8 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import axios from 'axios'
-
-const API_BASE = 'http://127.0.0.1:8000'
+import { statsApi, leaderboardApi, achievementApi } from '../api'
 
 export const useGrowthStore = defineStore('growth', () => {
   // Daily stats
@@ -30,9 +28,8 @@ export const useGrowthStore = defineStore('growth', () => {
   async function loadDailyStats(username, days = 7) {
     isLoadingStats.value = true
     try {
-      const res = await axios.get(`${API_BASE}/api/stats/${username}`, {
-        params: { days }
-      })
+      const period = days <= 1 ? 'day' : days <= 7 ? 'week' : days <= 30 ? 'month' : 'year'
+      const res = await statsApi.get(username, period)
       if (res.data) {
         dailyStats.value = res.data.daily_stats || []
         weeklySummary.value = res.data.summary || weeklySummary.value
@@ -47,9 +44,7 @@ export const useGrowthStore = defineStore('growth', () => {
   async function loadLeaderboard(type = 'global', category = 'exp', period = 'weekly') {
     isLoadingLeaderboard.value = true
     try {
-      const res = await axios.get(`${API_BASE}/api/leaderboard`, {
-        params: { type, category, period }
-      })
+      const res = await leaderboardApi.get(type, category, period)
       if (res.data) {
         leaderboard.value = res.data.rankings || []
         userRank.value = res.data.user_rank
@@ -63,7 +58,7 @@ export const useGrowthStore = defineStore('growth', () => {
 
   async function loadAchievements() {
     try {
-      const res = await axios.get(`${API_BASE}/api/achievements`)
+      const res = await achievementApi.all()
       achievements.value = res.data.achievements || []
     } catch (error) {
       console.error('加载成就失败:', error)
@@ -72,7 +67,7 @@ export const useGrowthStore = defineStore('growth', () => {
 
   async function loadUserAchievements(username) {
     try {
-      const res = await axios.get(`${API_BASE}/api/achievements/${username}`)
+      const res = await achievementApi.user(username)
       userAchievements.value = res.data.unlocked || []
     } catch (error) {
       console.error('加载用户成就失败:', error)

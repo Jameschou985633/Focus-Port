@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import axios from 'axios'
+import { itemApi } from '../api'
 
 const props = defineProps({
   username: { type: String, required: true }
@@ -34,7 +34,7 @@ const totalItems = computed(() => {
 const loadInventory = async () => {
   isLoading.value = true
   try {
-    const res = await axios.get(`http://127.0.0.1:8000/api/items/inventory/${props.username}`)
+    const res = await itemApi.inventory(props.username)
     items.value = res.data.items
   } catch (error) {
     console.error('加载背包失败:', error)
@@ -51,10 +51,7 @@ const useItem = async () => {
   if (!selectedItem.value) return
 
   try {
-    await axios.post('http://127.0.0.1:8000/api/items/use', {
-      username: props.username,
-      item_id: selectedItem.value.item_id
-    })
+    await itemApi.use(props.username, selectedItem.value.item_id)
 
     emit('item-used', selectedItem.value)
     selectedItem.value = null

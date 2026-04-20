@@ -3,12 +3,9 @@ import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { aiApi } from '../api'
 import { useUserStore } from '../stores/user'
-import axios from 'axios'
 
 const router = useRouter()
 const userStore = useUserStore()
-// 🌐 API 地址：优先使用环境变量
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
 const messages = ref([])
 const inputText = ref('')
@@ -63,7 +60,7 @@ const clearHistory = async () => {
   if (!confirm('确定要清空所有对话记录吗？')) return
 
   try {
-    await axios.delete(`${API_BASE}/api/ai/history/${userStore.username}`)
+    await aiApi.clearHistory(userStore.username)
     messages.value = []
   } catch (error) {
     console.error('清空失败:', error)
