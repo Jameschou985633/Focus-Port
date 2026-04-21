@@ -7,15 +7,19 @@ import { useUserStore } from '../stores/user'
 import { useFocusHubStore } from '../stores/focusHub'
 import { useDimensionStore } from '../stores/dimension'
 import { useMailStore } from '../stores/mail'
+import { useGoalDecomposer } from '../composables/useGoalDecomposer'
+import TaskDecomposeSheet from './focus-hub/TaskDecomposeSheet.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
 const focusHubStore = useFocusHubStore()
 const dimensionStore = useDimensionStore()
 const mailStore = useMailStore()
+const { decomposeGoal } = useGoalDecomposer()
 
-const durationOptions = [15, 25, 45]
+const durationOptions = [15, 25, 40, 60]
 const selectedDuration = ref(25)
+const selectedDurationIndex = ref(1)
 const isActionHydrating = ref(true)
 const isStartingFocus = ref(false)
 const isTaskLoading = ref(false)
@@ -29,6 +33,10 @@ const activeFocusTodoId = ref('')
 const selectedDateKey = ref('')
 const monthCursor = ref(new Date())
 const taskModalOpen = ref(false)
+const decomposeSheetOpen = ref(false)
+const decomposeDraftItems = ref([])
+const decomposeIsGenerating = ref(false)
+const decomposeError = ref('')
 
 const userAvatar = ref('')
 const userNickname = ref('')
@@ -180,6 +188,10 @@ const focusSubject = computed(() => selectedTodoTask.value?.title || 'Focus Sess
 const focusGoalTitle = computed(() => selectedTodoTask.value?.category || 'Today Focus')
 const focusActionTitle = computed(() => selectedTodoTask.value?.title || '请选择一个待办任务')
 const showFocusGoal = computed(() => Boolean(focusGoalTitle.value && focusGoalTitle.value !== focusActionTitle.value))
+const durationProgress = computed(() => {
+  const maxIndex = Math.max(1, durationOptions.length - 1)
+  return `${(selectedDurationIndex.value / maxIndex) * 100}%`
+})
 
 const selectFallbackTask = () => {
   const currentExists = todoTasks.value.some((task) => String(task.id) === String(selectedTodoTaskId.value))
@@ -323,7 +335,17 @@ const selectTask = (task) => {
 
 const handleDurationSelect = (minutes) => {
   if (focusHubStore.pomodoro.isRunning || isStartingFocus.value) return
-  selectedDuration.value = Number(minutes)
+  const closestIndex = durationOptions.reduce((bestIndex, option, index) => {
+    const bestDistance = Math.abs(option - Number(minutes))
+    const currentDistance = Math.abs(durationOptions[bestIndex] - Number(minutes))
+    return bestDistance < currentDistance ? index : bestIndex
+  }, 0)
+  selectedDurationIndex.value = closestIndex
+  selectedDuration.value = durationOptions[closestIndex]
+}
+
+const handleDurationDrag = (event) => {
+  handleDurationSelect(durationOptions[Number(event.target.value)] || selectedDuration.value)
 }
 
 const handleStartFocus = async () => {
@@ -402,13 +424,42 @@ const statusClass = (task) => {
   return 'todo'
 }
 
+const handleAIDecompose = async () => {
+  const task = selectedTodoTask.value
+  if (!task) return
+  decomposeSheetOpen.value = true
+  decomposeError.value = ''
+  decomposeDraftItems.value = []
+  decomposeIsGenerating.value = true
+  try {
+    const steps = await decomposeGoal({
+      goal: task.title || task.content || '',
+      style: 'balanced',
+      availableMinutes: selectedDuration.value
+    })
+    decomposeDraftItems.value = steps.map((s, i) => ({
+      id: s.id || `step-${i}`,
+      title: s.title,
+      estimatedPomodoros: s.estimatedPomodoros || 1,
+      description: s.description || ''
+    }))
+  } catch (err) {
+    decomposeError.value = String(err?.message || err || 'AI 拆解失败')
+  } finally {
+    decomposeIsGenerating.value = false
+  }
+}
+
+const handleDecomposeConfirm = () => {
+  decomposeSheetOpen.value = false
+  decomposeDraftItems.value = []
+}
+
 onMounted(async () => {
   try {
     focusHubStore.hydrate(userStore.username)
     dimensionStore.rehydrate()
-    selectedDuration.value = durationOptions.includes(Number(focusHubStore.pomodoro.focusMinutes))
-      ? Number(focusHubStore.pomodoro.focusMinutes)
-      : 25
+    handleDurationSelect(Number(focusHubStore.pomodoro.focusMinutes) || 25)
     selectedDateKey.value = todayDateKey()
     taskForm.value.scheduledDate = selectedDateKey.value
     await Promise.all([loadAvatarProfile(), loadTodoTasks()])
@@ -504,25 +555,27 @@ onUnmounted(() => {
 
     <template v-else>
       <aside class="figma-side-rail" aria-label="Focus navigation">
-        <button type="button" class="rail-menu" title="Menu" @click="goHome">
-          <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7" /></svg>
+        <button type="button" class="rail-brand" title="FocusPort Home" data-label="FocusPort" @click="goHome">
+          <span>F</span>
         </button>
 
-        <nav>
-          <button type="button" title="Dashboard" @click="goDashboard"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /></svg></button>
-          <button type="button" title="City" @click="enter2DCity"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3z" /></svg></button>
-          <button type="button" title="Shop" @click="goShop"><svg viewBox="0 0 24 24"><path d="M5 9h14l-1 11H6L5 9zm3 0a4 4 0 0 1 8 0" /></svg></button>
-          <button type="button" title="Mail" @click="goMail"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z" /><path d="m4 8 8 6 8-6" /></svg></button>
-          <button type="button" title="Tasks"><svg viewBox="0 0 24 24"><path d="M6 7h12M6 12h12M6 17h8" /></svg></button>
-          <button type="button" class="active" title="Calendar"><svg viewBox="0 0 24 24"><path d="M5 5h14v15H5zM8 3v4M16 3v4M5 10h14" /></svg></button>
-          <button type="button" title="Vault" @click="goVault"><svg viewBox="0 0 24 24"><path d="M7 4h10v16H7zM9 8h6M9 12h6" /></svg></button>
-          <button type="button" title="Friends" @click="goFriends"><svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c.7-3 2.5-5 5-5s4.3 2 5 5m-1.5 0c.6-2.1 2.1-3.5 4.5-3.5 2.2 0 3.8 1.4 4.5 3.5" /></svg></button>
-          <button type="button" title="Stats" @click="goStats"><svg viewBox="0 0 24 24"><path d="M5 19V5m0 14h14M9 16v-5M13 16V8M17 16v-8" /></svg></button>
-          <button type="button" title="Profile" @click="goProfile"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8c1-4 3.4-6 7-6s6 2 7 6" /></svg></button>
-          <button type="button" title="Playground" @click="goPlayground"><svg viewBox="0 0 24 24"><path d="M7 8h10l3 7-2 2-3-3H9l-3 3-2-2 3-7zM9 11h.01M12 11h.01M15 11h.01" /></svg></button>
+        <nav class="rail-nav">
+          <button type="button" title="Dashboard" data-label="Dashboard" @click="goDashboard"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /></svg></button>
+          <button type="button" title="City" data-label="2D City" @click="enter2DCity"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3z" /></svg></button>
+          <button type="button" title="Shop" data-label="Shop" @click="goShop"><svg viewBox="0 0 24 24"><path d="M5 9h14l-1 11H6L5 9zm3 0a4 4 0 0 1 8 0" /></svg></button>
+          <button type="button" title="Mail" data-label="Mail" @click="goMail"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z" /><path d="m4 8 8 6 8-6" /></svg><span v-if="mailUnread > 0" class="rail-badge">{{ mailUnread > 9 ? '9+' : mailUnread }}</span></button>
+          <span class="rail-divider" aria-hidden="true" />
+          <button type="button" class="active" title="Focus Home" data-label="Focus Home"><svg viewBox="0 0 24 24"><path d="M6 7h12M6 12h12M6 17h8" /></svg></button>
+          <button type="button" title="Calendar" data-label="Calendar"><svg viewBox="0 0 24 24"><path d="M5 5h14v15H5zM8 3v4M16 3v4M5 10h14" /></svg></button>
+          <span class="rail-divider" aria-hidden="true" />
+          <button type="button" title="Vault" data-label="Vault" @click="goVault"><svg viewBox="0 0 24 24"><path d="M7 4h10v16H7zM9 8h6M9 12h6" /></svg></button>
+          <button type="button" title="Friends" data-label="Friends" @click="goFriends"><svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c.7-3 2.5-5 5-5s4.3 2 5 5m-1.5 0c.6-2.1 2.1-3.5 4.5-3.5 2.2 0 3.8 1.4 4.5 3.5" /></svg></button>
+          <button type="button" title="Stats" data-label="Stats" @click="goStats"><svg viewBox="0 0 24 24"><path d="M5 19V5m0 14h14M9 16v-5M13 16V8M17 16v-8" /></svg></button>
+          <button type="button" title="Profile" data-label="Profile" @click="goProfile"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8c1-4 3.4-6 7-6s6 2 7 6" /></svg></button>
+          <button type="button" title="Playground" data-label="Playground" @click="goPlayground"><svg viewBox="0 0 24 24"><path d="M7 8h10l3 7-2 2-3-3H9l-3 3-2-2 3-7zM9 11h.01M12 11h.01M15 11h.01" /></svg></button>
         </nav>
 
-        <button type="button" class="rail-logout" title="Logout" @click="logout">
+        <button type="button" class="rail-logout" title="Logout" data-label="Logout" @click="logout">
           <svg viewBox="0 0 24 24"><path d="M12 3v9m6.4-5A8 8 0 1 1 5.6 7" /></svg>
         </button>
       </aside>
@@ -554,13 +607,10 @@ onUnmounted(() => {
           <article class="pomodoro-card">
             <div class="timer-row">
               <strong>{{ formattedRemaining.replace(':', ' : ') }}</strong>
-              <div class="timer-ring">
-                <svg viewBox="0 0 84 84">
-                  <circle cx="42" cy="42" :r="ringRadius" />
-                  <circle cx="42" cy="42" :r="ringRadius" :stroke-dasharray="ringCircumference" :stroke-dashoffset="ringOffset" />
-                </svg>
-                <span>{{ progressPercent }}%</span>
-              </div>
+              <button type="button" class="ai-decompose-btn" title="AI 任务拆解" @click="handleAIDecompose">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2 7h7l-5.5 4 2 7L12 16l-5.5 4 2-7L3 9h7z"/></svg>
+                <span>AI拆解</span>
+              </button>
             </div>
 
             <button
@@ -573,17 +623,35 @@ onUnmounted(() => {
               {{ focusActionLabel }}
             </button>
 
-            <div class="duration-track">
-              <button
-                v-for="m in durationOptions"
-                :key="m"
-                type="button"
-                :class="{ active: selectedDuration === m }"
+            <div
+              class="duration-slider"
+              :class="{ locked: focusHubStore.pomodoro.isRunning || isStartingFocus }"
+              :style="{ '--duration-progress': durationProgress }"
+            >
+              <input
+                v-model.number="selectedDurationIndex"
+                type="range"
+                min="0"
+                :max="durationOptions.length - 1"
+                step="1"
                 :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus"
-                @click="handleDurationSelect(m)"
+                aria-label="Pomodoro duration"
+                @input="handleDurationDrag"
+                @change="handleDurationDrag"
               >
-                {{ m }}
-              </button>
+              <div class="duration-ticks" aria-hidden="true">
+                <button
+                  v-for="(m, index) in durationOptions"
+                  :key="m"
+                  type="button"
+                  :class="{ active: selectedDurationIndex === index }"
+                  :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus"
+                  @click="handleDurationSelect(m)"
+                >
+                  <span />
+                  <b>{{ m }}</b>
+                </button>
+              </div>
             </div>
           </article>
 
@@ -712,6 +780,21 @@ onUnmounted(() => {
       </div>
     </template>
   </div>
+
+  <TaskDecomposeSheet
+    :open="decomposeSheetOpen"
+    :goal="selectedTodoTask?.title || ''"
+    :target-task-title="selectedTodoTask?.title || '未选择任务'"
+    :draft-items="decomposeDraftItems"
+    :is-generating="decomposeIsGenerating"
+    :generation-error="decomposeError"
+    @close="decomposeSheetOpen = false"
+    @refresh-ai="handleAIDecompose"
+    @confirm="handleDecomposeConfirm"
+    @remove-step="(id) => decomposeDraftItems = decomposeDraftItems.filter(s => s.id !== id)"
+    @update-step-title="({ id, value }) => decomposeDraftItems = decomposeDraftItems.map(s => s.id === id ? { ...s, title: value } : s)"
+    @update-step-pomodoros="({ id, value }) => decomposeDraftItems = decomposeDraftItems.map(s => s.id === id ? { ...s, estimatedPomodoros: Number(value) || 1 } : s)"
+  />
 </template>
 
 <style scoped>
@@ -729,42 +812,72 @@ onUnmounted(() => {
   inset: 0 auto 0 0;
   z-index: 40;
   width: 86px;
-  background: #273142;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(72, 128, 255, 0.2), transparent 34%),
+    linear-gradient(180deg, #2c3749 0%, #222b3a 48%, #1d2633 100%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  border-right: 1px solid rgba(49, 61, 79, 0.9);
+  border-right: 1px solid rgba(90, 107, 132, 0.38);
+  box-shadow: 18px 0 38px rgba(0, 0, 0, 0.16);
 }
 
-.rail-menu,
+.rail-brand,
 .rail-logout,
-.figma-side-rail nav button {
-  width: 52px;
-  height: 52px;
+.figma-side-rail .rail-nav button {
+  width: 48px;
+  height: 48px;
   border: 0;
   background: transparent;
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(223, 230, 241, 0.7);
   display: grid;
   place-items: center;
   cursor: pointer;
   position: relative;
+  border-radius: 16px;
+  transition:
+    color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
-.rail-menu {
+.rail-brand {
   margin-top: 18px;
-  margin-bottom: 22px;
+  margin-bottom: 20px;
+  color: #fff;
+  background: linear-gradient(135deg, #4880ff 0%, #7ca4ff 100%);
+  box-shadow: 0 14px 28px rgba(72, 128, 255, 0.28);
 }
 
-.figma-side-rail nav {
+.rail-brand span {
+  width: 30px;
+  height: 30px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+.rail-brand:hover {
+  transform: translateY(-1px) scale(1.03);
+  box-shadow: 0 18px 34px rgba(72, 128, 255, 0.36);
+}
+
+.figma-side-rail .rail-nav {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  width: 100%;
+  padding: 0 0 14px;
 }
 
 .figma-side-rail svg {
-  width: 22px;
-  height: 22px;
+  width: 21px;
+  height: 21px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.9;
@@ -774,22 +887,89 @@ onUnmounted(() => {
 
 .figma-side-rail button:hover,
 .figma-side-rail button.active {
-  color: #4880ff;
+  color: #fff;
+  background: rgba(72, 128, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(72, 128, 255, 0.24);
+  transform: translateX(2px);
+}
+
+.figma-side-rail button.active {
+  background: linear-gradient(135deg, rgba(72, 128, 255, 0.98), rgba(72, 128, 255, 0.7));
+  box-shadow: 0 16px 30px rgba(72, 128, 255, 0.25);
 }
 
 .figma-side-rail button.active::before {
   content: "";
   position: absolute;
-  left: -17px;
+  left: -19px;
   width: 4px;
-  height: 52px;
+  height: 34px;
   border-radius: 0 2px 2px 0;
   background: #4880ff;
+  box-shadow: 0 0 18px rgba(72, 128, 255, 0.9);
+}
+
+.figma-side-rail button[data-label]::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 62px;
+  top: 50%;
+  transform: translate(-8px, -50%);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  color: #f8fafc;
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.24);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  padding: 8px 11px;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.figma-side-rail button[data-label]:hover::after {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+.rail-divider {
+  width: 30px;
+  height: 1px;
+  margin: 6px 0;
+  background: linear-gradient(90deg, transparent, rgba(211, 220, 235, 0.24), transparent);
+}
+
+.rail-badge {
+  position: absolute;
+  top: 7px;
+  right: 6px;
+  min-width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  background: #ff5f6d;
+  color: #fff;
+  border: 2px solid #273142;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .rail-logout {
   margin-top: auto;
-  margin-bottom: 24px;
+  margin-bottom: 22px;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.rail-logout:hover {
+  color: #ff8c8c;
+  background: rgba(255, 95, 109, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 95, 109, 0.2);
 }
 
 .figma-top-bar {
@@ -941,36 +1121,34 @@ onUnmounted(() => {
   line-height: 1;
 }
 
-.timer-ring {
-  position: relative;
+.ai-decompose-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   width: 76px;
   height: 76px;
+  border: 1px solid rgba(72, 128, 255, 0.3);
+  border-radius: 16px;
+  background: rgba(72, 128, 255, 0.1);
+  color: #4880ff;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
-.timer-ring svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
+.ai-decompose-btn:hover {
+  background: rgba(72, 128, 255, 0.2);
 }
 
-.timer-ring circle {
-  fill: none;
-  stroke-width: 7;
-  stroke: rgba(72, 128, 255, 0.16);
+.ai-decompose-btn svg {
+  width: 24px;
+  height: 24px;
 }
 
-.timer-ring circle + circle {
-  stroke: #4880ff;
-  stroke-linecap: round;
-}
-
-.timer-ring span {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  font-weight: 700;
+.ai-decompose-btn span {
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .start-focus-btn {
@@ -992,30 +1170,98 @@ onUnmounted(() => {
   opacity: 0.42;
 }
 
-.duration-track {
-  height: 8px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #4880ff 0 52%, rgba(255, 255, 255, 0.94) 52% 100%);
+.duration-slider {
   position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  height: 44px;
+  padding-top: 6px;
 }
 
-.duration-track button {
-  width: 20px;
-  height: 20px;
+.duration-slider::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 16px;
+  height: 8px;
   border-radius: 999px;
+  background:
+    linear-gradient(90deg, #4880ff 0 var(--duration-progress), rgba(255, 255, 255, 0.9) var(--duration-progress) 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.duration-slider.locked {
+  opacity: 0.62;
+}
+
+.duration-slider input {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  right: 0;
+  top: 4px;
+  width: 100%;
+  height: 30px;
+  opacity: 0;
+  cursor: grab;
+}
+
+.duration-slider input:disabled {
+  cursor: not-allowed;
+}
+
+.duration-slider input:active {
+  cursor: grabbing;
+}
+
+.duration-ticks {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.duration-ticks button {
+  width: 34px;
   border: 0;
-  background: rgba(255, 255, 255, 0);
-  color: transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.58);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 0;
   cursor: pointer;
 }
 
-.duration-track button.active {
-  width: 28px;
-  height: 28px;
+.duration-ticks button:disabled {
+  cursor: not-allowed;
+}
+
+.duration-ticks span {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #eef4ff;
+  box-shadow: 0 0 0 5px rgba(17, 24, 39, 0.92);
+  transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.duration-ticks button.active {
+  color: #fff;
+}
+
+.duration-ticks button.active span {
+  transform: scale(1.42);
   background: #7e8793;
+  box-shadow:
+    0 0 0 5px rgba(17, 24, 39, 0.94),
+    0 10px 20px rgba(72, 128, 255, 0.26);
+}
+
+.duration-ticks b {
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .task-list-panel {
