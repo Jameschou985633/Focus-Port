@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import RealIsland3D from './RealIsland3D.vue'
 import IsometricCity from './IsometricCity.vue'
 import DimensionBackpack from './DimensionBackpack.vue'
@@ -8,10 +8,13 @@ import { useDimensionStore } from '../stores/dimension'
 import { useInventoryStore } from '../stores/inventory'
 
 const route = useRoute()
+const router = useRouter()
 const dimensionStore = useDimensionStore()
 const inventoryStore = useInventoryStore()
 
 const isPhysical = computed(() => dimensionStore.activeDimension === 'PHYSICAL')
+const worldTitle = computed(() => (isPhysical.value ? '物理世界' : '盖亚拓扑'))
+const worldMode = computed(() => (isPhysical.value ? '3D' : '2D'))
 
 const currentUsername = () => {
   if (typeof window === 'undefined') return 'guest'
@@ -25,6 +28,18 @@ const applyRouteDimension = (username = currentUsername()) => {
   if (!raw) return false
   dimensionStore.setDimension(raw, username)
   return true
+}
+
+const switchDimension = (dimension) => {
+  dimensionStore.setDimension(dimension, currentUsername())
+}
+
+const openShop = () => {
+  router.push('/shop')
+}
+
+const openBackpack = () => {
+  window.dispatchEvent(new CustomEvent('blueprint-vault-open'))
 }
 
 onMounted(async () => {
@@ -46,6 +61,36 @@ watch(
 
 <template>
   <div class="dimension-shell">
+    <header class="world-hud">
+      <div class="world-title">
+        <span>{{ worldMode }} MAP</span>
+        <strong>{{ worldTitle }}</strong>
+        <small>购买建筑，打开背包，然后在当前地图建造。</small>
+      </div>
+
+      <nav class="world-switch" aria-label="地图维度切换">
+        <button
+          type="button"
+          :class="{ active: isPhysical }"
+          @click="switchDimension('PHYSICAL')"
+        >
+          3D 物理世界
+        </button>
+        <button
+          type="button"
+          :class="{ active: !isPhysical }"
+          @click="switchDimension('GAIA')"
+        >
+          2D 盖亚拓扑
+        </button>
+      </nav>
+
+      <div class="world-actions">
+        <button type="button" class="ghost" @click="openBackpack">打开背包</button>
+        <button type="button" class="primary" @click="openShop">购买建筑</button>
+      </div>
+    </header>
+
     <div v-if="isPhysical" class="dimension-shell-physical">
       <RealIsland3D />
     </div>
@@ -150,5 +195,107 @@ watch(
 
 .dimension-shell-physical {
   position: relative;
+}
+
+.world-hud {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 42;
+  width: min(980px, calc(100vw - 36px));
+  min-height: 64px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px 12px 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(115, 224, 255, 0.2);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(72, 128, 255, 0.18), transparent 36%),
+    rgba(7, 16, 34, 0.72);
+  color: #eef7ff;
+  box-shadow: 0 20px 54px rgba(3, 8, 22, 0.34);
+  backdrop-filter: blur(18px);
+}
+
+.world-title {
+  display: grid;
+  gap: 2px;
+}
+
+.world-title span {
+  color: rgba(156, 230, 255, 0.8);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.world-title strong {
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.world-title small {
+  color: rgba(238, 247, 255, 0.66);
+  font-size: 12px;
+}
+
+.world-switch,
+.world-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.world-switch {
+  padding: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.world-hud button {
+  border: 0;
+  min-height: 38px;
+  border-radius: 999px;
+  padding: 0 14px;
+  color: rgba(238, 247, 255, 0.76);
+  background: transparent;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.world-switch button.active {
+  color: #fff;
+  background: linear-gradient(135deg, #4880ff, #6d5cff);
+  box-shadow: 0 10px 24px rgba(72, 128, 255, 0.28);
+}
+
+.world-actions .ghost {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.world-actions .primary {
+  color: #fff;
+  background: #4880ff;
+}
+
+@media (max-width: 820px) {
+  .world-hud {
+    top: 10px;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .world-switch,
+  .world-actions {
+    justify-content: stretch;
+  }
+
+  .world-switch button,
+  .world-actions button {
+    flex: 1;
+  }
 }
 </style>

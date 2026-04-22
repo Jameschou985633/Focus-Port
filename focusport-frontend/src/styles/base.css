@@ -795,4 +795,409 @@ select.input option {
   transform: scaleX(-1);
 }
 
+/* ============================================
+ * FOCUSPORT GLASS MODALS - Figma alert/notification style
+ * ============================================ */
+
+:root {
+  --fp-modal-surface: rgba(58, 60, 62, 0.88);
+  --fp-modal-surface-deep: rgba(43, 46, 50, 0.9);
+  --fp-modal-border: rgba(255, 255, 255, 0.34);
+  --fp-modal-text: rgba(255, 255, 255, 0.96);
+  --fp-modal-muted: rgba(255, 255, 255, 0.68);
+  --fp-modal-faint: rgba(255, 255, 255, 0.18);
+  --fp-modal-accent: #4880ff;
+}
+
+:is(
+  .modal-overlay,
+  .task-modal-overlay,
+  .compose-overlay,
+  .detail-overlay,
+  .avatar-selector-overlay,
+  .task-complete-modal-overlay,
+  .summary-overlay,
+  .preview-overlay,
+  .fp-glass-overlay
+) {
+  background:
+    radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.08), transparent 28%),
+    rgba(12, 14, 18, 0.68) !important;
+  backdrop-filter: blur(22px) saturate(138%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(138%) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: clamp(16px, 4vw, 28px) !important;
+  z-index: var(--z-modal, 1000) !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) {
+  position: relative !important;
+  overflow: hidden !important;
+  width: min(var(--fp-modal-width, 436px), calc(100vw - 32px)) !important;
+  max-width: min(var(--fp-modal-max-width, 560px), calc(100vw - 32px)) !important;
+  max-height: min(86vh, 760px) !important;
+  overflow-y: auto !important;
+  border: 1.4px solid var(--fp-modal-border) !important;
+  border-radius: clamp(30px, 5vw, 46px) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015)),
+    linear-gradient(135deg, var(--fp-modal-surface), var(--fp-modal-surface-deep)) !important;
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+  color: var(--fp-modal-text) !important;
+  padding: clamp(20px, 3.4vw, 28px) !important;
+  font-family: "SF Pro Display", "SF Pro Text", "Nunito Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif !important;
+  text-align: center !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.14), transparent 30%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04), transparent 45%);
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) > * {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+:is(
+  .modal-header,
+  .task-modal header,
+  .modal-content > h3:first-child,
+  .modal-card .modal-header,
+  .compose-panel .compose-header
+) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 12px !important;
+  border: 0 !important;
+  margin: 0 0 14px !important;
+  padding: 0 !important;
+  text-align: center !important;
+}
+
+:is(.modal-header h2, .modal-header h3, .modal-content h3, .modal-card h3, .task-modal header p, .compose-panel h3, .detail-card h3, .task-complete-modal h3) {
+  margin: 0 !important;
+  color: var(--fp-modal-text) !important;
+  font-size: clamp(18px, 2.5vw, 20px) !important;
+  font-weight: 800 !important;
+  line-height: 1.25 !important;
+  letter-spacing: -0.01em !important;
+  text-align: center !important;
+}
+
+:is(.modal-body, .modal-section, .task-modal label, .compose-body, .detail-body, .summary-body) {
+  color: var(--fp-modal-muted) !important;
+  font-size: clamp(14px, 2.2vw, 15px) !important;
+  line-height: 1.55 !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) :is(p, span, small, label) {
+  line-height: 1.45 !important;
+}
+
+:is(
+  .modal-footer,
+  .modal-actions,
+  .actions,
+  .task-modal footer,
+  .modal-content .actions,
+  .compose-actions
+) {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  flex-wrap: wrap !important;
+  gap: 10px !important;
+  margin-top: 16px !important;
+  padding-top: 12px !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) :is(button, .confirm-btn, .primary-btn, .cancel-btn, .close-btn) {
+  min-height: 44px !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--fp-modal-text) !important;
+  padding: 0 20px !important;
+  font-size: clamp(15px, 2.2vw, 17px) !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  box-shadow: none !important;
+  transition: background 0.18s ease, transform 0.18s ease, border-color 0.18s ease !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) :is(button, .confirm-btn, .primary-btn):not(.close-btn):not(.ghost):not(.cancel-btn):hover {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.24) !important;
+  transform: translateY(-1px) !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) :is(.primary-btn, .confirm-btn, button[type="submit"], button.primary) {
+  background: linear-gradient(135deg, rgba(72, 128, 255, 0.95), rgba(116, 87, 255, 0.88)) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) :is(.ghost, .cancel-btn) {
+  color: rgba(255, 255, 255, 0.62) !important;
+}
+
+:is(.close-btn, .modal-header button, .task-modal header button) {
+  min-width: 44px !important;
+  width: 44px !important;
+  height: 44px !important;
+  padding: 0 !important;
+  border-radius: 999px !important;
+  font-size: 16px !important;
+}
+
+.fp-glass-modal-wide {
+  --fp-modal-width: 860px;
+  --fp-modal-max-width: 900px;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) :is(input, textarea, select) {
+  min-height: 44px !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--fp-modal-text) !important;
+  padding: 0 14px !important;
+  font-size: 15px !important;
+  outline: none !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) textarea {
+  padding: 14px !important;
+}
+
+:is(
+  .modal-container,
+  .modal-content,
+  .modal-card,
+  .profile-modal,
+  .notification-modal,
+  .password-modal,
+  .task-modal,
+  .compose-panel,
+  .detail-card,
+  .avatar-selector-modal,
+  .task-complete-modal,
+  .summary-shell,
+  .preview-modal,
+  .fp-glass-modal
+) :is(input, textarea, select):focus {
+  border-color: rgba(72, 128, 255, 0.78) !important;
+  box-shadow: 0 0 0 4px rgba(72, 128, 255, 0.16) !important;
+}
+
+@media (max-width: 560px) {
+  :is(
+    .modal-container,
+    .modal-content,
+    .modal-card,
+    .profile-modal,
+    .notification-modal,
+    .password-modal,
+    .task-modal,
+    .compose-panel,
+    .detail-card,
+    .avatar-selector-modal,
+    .task-complete-modal,
+    .summary-shell,
+    .preview-modal,
+    .fp-glass-modal
+  ) {
+    width: calc(100vw - 24px) !important;
+    border-radius: 30px !important;
+    padding: 20px !important;
+  }
+
+  :is(.modal-footer, .modal-actions, .actions, .task-modal footer, .compose-actions) {
+    flex-direction: column-reverse !important;
+  }
+
+  :is(
+    .modal-container,
+    .modal-content,
+    .modal-card,
+    .profile-modal,
+    .notification-modal,
+    .password-modal,
+    .task-modal,
+    .compose-panel,
+    .detail-card,
+    .avatar-selector-modal,
+    .task-complete-modal,
+    .summary-shell,
+    .preview-modal,
+    .fp-glass-modal
+  ) :is(button, .confirm-btn, .primary-btn, .cancel-btn) {
+    width: 100% !important;
+  }
+}
+
 

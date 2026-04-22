@@ -57,6 +57,7 @@ const CITY_THEME = {
 const SAFE_CITY_Y = 1.7
 
 const focusMinutes = computed(() => userGrowth.value.total_focus_minutes || 0)
+const normalizedPhysicalPlaced = computed(() => inventoryStore.placedByDimension.PHYSICAL || [])
 
 const normalizePlacementType = (value = '', category = '') => {
   const placement = String(value || '').trim().toLowerCase()
@@ -105,7 +106,8 @@ const placementType = computed(() => {
 const occupiedSlotIds = computed(() => {
   const occupied = new Set()
   placedDecorations.value.forEach((item) => {
-    if (item.slot_id) occupied.add(item.slot_id)
+    const slotId = item.slotId || item.slot_id
+    if (slotId) occupied.add(slotId)
   })
   return occupied
 })
@@ -163,7 +165,7 @@ const loadCitySlots = async () => {
 
 const upsertPlacedDecoration = (item) => {
   if (!item?.id) return
-  const next = placedDecorations.value.filter((entry) => entry.id !== item.id)
+  const next = placedDecorations.value.filter((entry) => String(entry.id) !== String(item.id))
   next.push(item)
   next.sort((left, right) => (left.id || 0) - (right.id || 0))
   placedDecorations.value = next
@@ -172,8 +174,8 @@ const upsertPlacedDecoration = (item) => {
 const loadPlacedDecorations = async ({ preserveExisting = false, fallbackItem = null, showRefreshError = false } = {}) => {
   try {
     const response = await unifiedShopApi.placed(currentUsername.value, { dimension: '3D' })
-    placedDecorations.value = response.data.items || []
     inventoryStore.replacePlacedItemsForDimension('PHYSICAL', response.data.items || [])
+    placedDecorations.value = normalizedPhysicalPlaced.value
     return true
   } catch (error) {
     console.error('Failed to load placed physical assets', error)
@@ -181,7 +183,8 @@ const loadPlacedDecorations = async ({ preserveExisting = false, fallbackItem = 
       placedDecorations.value = []
     }
     if (fallbackItem) {
-      upsertPlacedDecoration(fallbackItem)
+      inventoryStore.replacePlacedItemsForDimension('PHYSICAL', [...normalizedPhysicalPlaced.value, fallbackItem])
+      placedDecorations.value = normalizedPhysicalPlaced.value
     }
     if (showRefreshError) {
       window.alert(error.response?.data?.detail || 'Placement succeeded, but refresh failed. Please reload and verify.')
@@ -301,9 +304,9 @@ const confirmPlacement = async (slot) => {
     )
     const placedItem = response.data?.placed_item || null
     if (placedItem) {
-      selectedDecoration.value = placedItem
-      upsertPlacedDecoration(placedItem)
-      inventoryStore.completePlacement(placedItem, placementItem.value)
+      const normalizedPlaced = inventoryStore.completePlacement(placedItem, placementItem.value)
+      selectedDecoration.value = normalizedPlaced
+      upsertPlacedDecoration(normalizedPlaced)
     }
     isPlacementMode.value = false
     placementItem.value = null
@@ -323,7 +326,7 @@ const confirmPlacement = async (slot) => {
 const deleteSelectedDecoration = async () => {
   if (!selectedDecoration.value) return
   const target = selectedDecoration.value
-  if (!window.confirm(`确认移除 ${target.name_cn || target.name} 吗？`)) return
+  if (!window.confirm(`确认移除 ${target.nameCn || target.name_cn || target.name} 吗？`)) return
   try {
     await unifiedShopApi.removePlaced(target.id, currentUsername.value)
     inventoryStore.handlePlacedItemRemoval(target)
@@ -337,7 +340,7 @@ const deleteSelectedDecoration = async () => {
 
 const selectDecoration = (item) => {
   if (isPlacementMode.value) return
-  selectedDecoration.value = selectedDecoration.value?.id === item.id ? null : item
+  selectedDecoration.value = String(selectedDecoration.value?.id) === String(item.id) ? null : item
 }
 
 const consumePendingPlacement = () => {
@@ -354,6 +357,10 @@ watch(compatibleSlots, (slots) => {
     hoveredPlacementSlotId.value = slots[0].slot_id
   }
 })
+
+watch(normalizedPhysicalPlaced, (items) => {
+  placedDecorations.value = items
+}, { deep: true })
 
 watch(
   () => [inventoryStore.placementDraft, inventoryStore.placementMode, dimensionStore.activeDimension, citySlots.value.length],
@@ -539,11 +546,20 @@ onUnmounted(() => {
           v-for="deco in placedDecorations"
           :key="deco.id"
           :item="deco"
-          :is-selected="selectedDecoration?.id === deco.id"
-          :slot-footprint="slotFootprintById[deco.slot_id] || 0"
+          :is-selected="String(selectedDecoration?.id) === String(deco.id)"
+          :slot-footprint="slotFootprintById[deco.slotId || deco.slot_id] || 0"
           @select="selectDecoration(deco)"
         />
       </TresCanvas>
+    </div>
+
+    <div v-if="selectedDecoration && !props.previewMode" class="selected-bar kenney-hud-panel">
+      <div>
+        <span class="selected-slot">{{ selectedDecoration.slotId || selectedDecoration.slot_id || '自由槽位' }}</span>
+        <strong class="selected-name">{{ selectedDecoration.nameCn || selectedDecoration.name_cn || selectedDecoration.name }}</strong>
+      </div>
+      <button type="button" class="selected-btn" @click="selectedDecoration = null">取消选择</button>
+      <button type="button" class="selected-btn danger" @click="deleteSelectedDecoration">移除</button>
     </div>
 
   </div>

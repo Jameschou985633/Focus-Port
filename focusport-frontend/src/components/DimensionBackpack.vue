@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDimensionStore } from '../stores/dimension'
@@ -80,7 +80,7 @@ onUnmounted(() => {
       </header>
 
       <p v-if="inventoryStore.isPlacing" class="placement-hint">
-        正在准备部署 {{ inventoryStore.placementDraft?.nameCn || inventoryStore.placementDraft?.name }}
+        正在准备建造 {{ inventoryStore.placementDraft?.nameCn || inventoryStore.placementDraft?.name }}
       </p>
 
       <div class="dimension-section-list">
@@ -113,7 +113,7 @@ onUnmounted(() => {
 
               <div class="item-copy">
                 <strong>{{ item.nameCn || item.name }}</strong>
-                <span>{{ item.dimension === 'GAIA' ? `占地 ${item.gridWidth}x${item.gridHeight}` : 'ENGINEERING DOCK 3D 实体' }}</span>
+                <span>{{ item.dimension === 'GAIA' ? `2D 地块 · 占地 ${item.gridWidth}x${item.gridHeight}` : '3D 物理建筑' }}</span>
               </div>
 
               <button
@@ -123,13 +123,13 @@ onUnmounted(() => {
                 :disabled="!canPlaceItem(item)"
                 @click="handlePlaceItem(item)"
               >
-                {{ !canPlaceItem(item) ? '不可放置' : isDraftItem(item) ? '取消' : '放置' }}
+                {{ !canPlaceItem(item) ? '不可建造' : isDraftItem(item) ? '取消' : '建造' }}
               </button>
             </article>
           </div>
 
           <div v-else class="empty-state">
-            当前分舱还没有资产。
+            当前世界还没有可建造资产。
           </div>
         </section>
       </div>

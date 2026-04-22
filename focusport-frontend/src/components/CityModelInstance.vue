@@ -19,19 +19,20 @@ const modelError = ref(false)
 const loadedScene = shallowRef(null)
 const loadSequence = ref(0)
 
+const modelPath = computed(() => props.item?.model_path || props.item?.modelPath || '')
+const itemCode = computed(() => props.item?.item_code || props.item?.itemCode || '')
+
 const placementType = computed(() => {
-  if (props.item?.placement_type) return props.item.placement_type
+  if (props.item?.placement_type || props.item?.placementType) return props.item.placement_type || props.item.placementType
   if (props.item?.category === 'structures') return 'building'
   if (['plants', 'trees'].includes(props.item?.category)) return 'greenery'
   return 'building'
 })
 
 const previewAccent = computed(() => (placementType.value === 'greenery' ? '#53f0b0' : '#73e0ff'))
-const isCityAsset = computed(() => /\/city-assets\//i.test(String(props.item?.model_path || '')))
+const isCityAsset = computed(() => /\/city-assets\//i.test(String(modelPath.value || '')))
 const isSkyscraper = computed(() => {
-  const itemCode = String(props.item?.item_code || '')
-  const modelPath = String(props.item?.model_path || '')
-  return /skyscraper/i.test(itemCode) || /skyscraper/i.test(modelPath)
+  return /skyscraper/i.test(String(itemCode.value || '')) || /skyscraper/i.test(String(modelPath.value || ''))
 })
 
 const fallbackColor = computed(() => {
@@ -202,17 +203,17 @@ const loadModel = async () => {
   modelError.value = false
   loadedScene.value = null
 
-  if (!props.item?.model_path) {
+  if (!modelPath.value) {
     modelError.value = true
     return
   }
 
-  const preferredPath = resolvePreferredModelPath(props.item.model_path)
+  const preferredPath = resolvePreferredModelPath(modelPath.value)
   let sharedTexture = null
 
   try {
     const encodedPreferredPath = preferredPath.replace(/ /g, '%20')
-    const texturePath = resolveCityTexturePath(preferredPath || props.item.model_path)
+    const texturePath = resolveCityTexturePath(preferredPath || modelPath.value)
     if (texturePath) {
       sharedTexture = await new THREE.TextureLoader().loadAsync(texturePath.replace(/ /g, '%20'))
       sharedTexture.colorSpace = THREE.SRGBColorSpace
@@ -237,8 +238,8 @@ const loadModel = async () => {
     loadedScene.value = preparedScene
     modelLoaded.value = true
   } catch (error) {
-    const fallbackObjPath = String(props.item?.model_path || '').replace(/ /g, '%20')
-    if (preferredPath !== props.item?.model_path && /\.obj$/i.test(fallbackObjPath)) {
+    const fallbackObjPath = String(modelPath.value || '').replace(/ /g, '%20')
+    if (preferredPath !== modelPath.value && /\.obj$/i.test(fallbackObjPath)) {
       try {
         const fallbackScene = await loadObjModel(fallbackObjPath)
         if (currentSequence !== loadSequence.value) return
@@ -249,17 +250,17 @@ const loadModel = async () => {
         modelError.value = false
         return
       } catch (fallbackError) {
-        console.warn(`Failed to load fallback OBJ: ${props.item?.model_path}`, fallbackError)
+        console.warn(`Failed to load fallback OBJ: ${modelPath.value}`, fallbackError)
       }
     }
     if (currentSequence !== loadSequence.value) return
-    console.warn(`Failed to load model: ${props.item?.model_path}`, error)
+    console.warn(`Failed to load model: ${modelPath.value}`, error)
     modelError.value = true
   }
 }
 
 watch(
-  () => [props.item?.model_path, props.item?.item_code, props.targetFootprint, props.ghost],
+  () => [modelPath.value, itemCode.value, props.targetFootprint, props.ghost],
   () => {
     loadModel()
   },

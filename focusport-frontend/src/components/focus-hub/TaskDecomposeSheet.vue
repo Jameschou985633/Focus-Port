@@ -76,7 +76,7 @@ onUnmounted(() => {
     >
       <div
         v-if="open"
-        class="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/70 px-3 py-6 backdrop-blur-sm"
+        class="fp-glass-overlay fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/70 px-3 py-6 backdrop-blur-sm"
         @click.self="$emit('close')"
       >
         <transition
@@ -89,7 +89,7 @@ onUnmounted(() => {
         >
           <section
             v-if="open"
-            class="w-full max-w-4xl rounded-2xl border border-sky-300/30 bg-[#0F1525]/95 p-4 shadow-[0_20px_44px_rgba(2,6,23,0.55)] backdrop-blur-xl md:p-5"
+            class="fp-glass-modal fp-glass-modal-wide w-full max-w-4xl rounded-2xl border border-sky-300/30 bg-[#0F1525]/95 p-4 shadow-[0_20px_44px_rgba(2,6,23,0.55)] backdrop-blur-xl md:p-5"
           >
             <header class="flex flex-wrap items-start justify-between gap-3">
               <div>
