@@ -3530,6 +3530,241 @@ def pk_decline(payload: PKDecisionPayload) -> dict[str, Any]:
     return {"success": True}
 
 
+# ── Arcade / Gomoku Backend ──────────────────────────────────────────
+import asyncio
+import random
+import string
+
+_arcade_rooms: dict[str, dict[str, Any]] = {}  # room_code -> room state
+_arcade_ws_connections: dict[str, set[WebSocket]] = defaultdict(set)
+_gomoku_games: dict[str, dict[str, Any]] = {}
+_gomoku_ws_connections: dict[str, set[WebSocket]] = defaultdict(set)
+
+
+def _generate_room_code(length: int = 6) -> str:
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+
+class ArcadePlayPayload(BaseModel):
+    username: str
+    game: str
+
+
+class ArcadeJoinPayload(BaseModel):
+    room_code: str
+    username: str
+
+
+class GomokuCreatePayload(BaseModel):
+    username: str
+
+
+class GomokuJoinPayload(BaseModel):
+    room_code: str
+    username: str
+
+
+class GomokuMovePayload(BaseModel):
+    game_id: str
+    username: str
+    row: int
+    col: int
+
+
+class GomokuSurrenderPayload(BaseModel):
+    game_id: str
+    username: str
+
+
+@app.post("/api/arcade/play")
+def arcade_play(payload: ArcadePlayPayload) -> dict[str, Any]:
+    code = _generate_room_code()
+    _arcade_rooms[code] = {
+        "room_code": code,
+        "game": payload.game,
+        "status": "waiting",
+        "player_host": payload.username,
+        "player_guest": None,
+        "moves": [],
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    return {"room_code": code, "status": "waiting"}
+
+
+@app.post("/api/arcade/join")
+def arcade_join(payload: ArcadeJoinPayload) -> dict[str, Any]:
+    room = _arcade_rooms.get(payload.room_code)
+    if not room:
+        raise HTTPException(status_code=404, detail="房间不存在")
+    if room["status"] == "playing":
+        raise HTTPException(status_code=400, detail="房间已满")
+    room["player_guest"] = payload.username
+    room["status"] = "playing"
+    return {"room_code": payload.room_code, "status": "playing", "game": room["game"]}
+
+
+@app.get("/api/arcade/room/{room_code}")
+def arcade_room(room_code: str) -> dict[str, Any]:
+    room = _arcade_rooms.get(room_code)
+    if not room:
+        raise HTTPException(status_code=404, detail="房间不存在")
+    return room
+
+
+@app.websocket("/ws/arcade/{room_code}")
+async def arcade_ws(websocket: WebSocket, room_code: str) -> None:
+    await websocket.accept()
+    room = _arcade_rooms.get(room_code)
+    if not room:
+        await websocket.send_json({"type": "error", "detail": "房间不存在"})
+        await websocket.close()
+        return
+
+    _arcade_ws_connections[room_code].add(websocket)
+    try:
+        # Send initial sync
+        await websocket.send_json({
+            "type": "sync",
+            "player_host": room["player_host"],
+            "player_guest": room.get("player_guest"),
+            "status": room["status"],
+            "moves": room.get("moves", []),
+        })
+        while True:
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+            msg_type = msg.get("type")
+
+            if msg_type == "move":
+                move_record = {"row": msg["row"], "col": msg["col"], "color": msg["color"], "username": msg.get("username", "")}
+                room.setdefault("moves", []).append(move_record)
+                # Broadcast move to all connections in room
+                for ws_conn in list(_arcade_ws_connections.get(room_code, set())):
+                    if ws_conn != websocket:
+                        try:
+                            await ws_conn.send_json({"type": "move", **move_record})
+                        except Exception:
+                            _arcade_ws_connections[room_code].discard(ws_conn)
+
+            elif msg_type == "game_over":
+                room["status"] = "finished"
+                for ws_conn in list(_arcade_ws_connections.get(room_code, set())):
+                    try:
+                        await ws_conn.send_json({
+                            "type": "game_over",
+                            "winner_color": msg.get("winner_color"),
+                            "winner_name": msg.get("winner_name"),
+                        })
+                    except Exception:
+                        _arcade_ws_connections[room_code].discard(ws_conn)
+
+    except WebSocketDisconnect:
+        _arcade_ws_connections[room_code].discard(websocket)
+    except Exception:
+        _arcade_ws_connections[room_code].discard(websocket)
+
+
+@app.post("/api/gomoku/create")
+def gomoku_create(payload: GomokuCreatePayload) -> dict[str, Any]:
+    game_id = _generate_room_code(8)
+    _gomoku_games[game_id] = {
+        "game_id": game_id,
+        "room_code": game_id,
+        "player_black": payload.username,
+        "player_white": None,
+        "status": "waiting",
+        "moves": [],
+        "winner": None,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    return {"game_id": game_id, "room_code": game_id}
+
+
+@app.post("/api/gomoku/join")
+def gomoku_join(payload: GomokuJoinPayload) -> dict[str, Any]:
+    game = _gomoku_games.get(payload.room_code)
+    if not game:
+        raise HTTPException(status_code=404, detail="房间不存在")
+    game["player_white"] = payload.username
+    game["status"] = "playing"
+    return {"game_id": game["game_id"], "room_code": game["room_code"]}
+
+
+@app.get("/api/gomoku/{game_id}")
+def gomoku_get(game_id: str) -> dict[str, Any]:
+    game = _gomoku_games.get(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="对局不存在")
+    return game
+
+
+@app.post("/api/gomoku/move")
+def gomoku_move(payload: GomokuMovePayload) -> dict[str, Any]:
+    game = _gomoku_games.get(payload.game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="对局不存在")
+    game["moves"].append({"row": payload.row, "col": payload.col, "username": payload.username})
+    return {"success": True}
+
+
+@app.post("/api/gomoku/surrender")
+def gomoku_surrender(payload: GomokuSurrenderPayload) -> dict[str, Any]:
+    game = _gomoku_games.get(payload.game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="对局不存在")
+    game["status"] = "finished"
+    return {"success": True}
+
+
+@app.get("/api/gomoku/list")
+def gomoku_list() -> list[dict[str, Any]]:
+    return list(_gomoku_games.values())
+
+
+@app.websocket("/ws/gomoku/{game_id}")
+async def gomoku_ws(websocket: WebSocket, game_id: str) -> None:
+    await websocket.accept()
+    game = _gomoku_games.get(game_id)
+    if not game:
+        await websocket.send_json({"type": "error", "detail": "对局不存在"})
+        await websocket.close()
+        return
+
+    _gomoku_ws_connections[game_id].add(websocket)
+    try:
+        await websocket.send_json({"type": "sync", **game})
+        while True:
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+            msg_type = msg.get("type")
+
+            if msg_type == "move":
+                move_record = {"row": msg["row"], "col": msg["col"], "color": msg.get("color", 1), "username": msg.get("username", "")}
+                game["moves"].append(move_record)
+                for ws_conn in list(_gomoku_ws_connections.get(game_id, set())):
+                    if ws_conn != websocket:
+                        try:
+                            await ws_conn.send_json({"type": "move", **move_record})
+                        except Exception:
+                            _gomoku_ws_connections[game_id].discard(ws_conn)
+
+            elif msg_type == "game_over":
+                game["status"] = "finished"
+                for ws_conn in list(_gomoku_ws_connections.get(game_id, set())):
+                    try:
+                        await ws_conn.send_json({
+                            "type": "game_over",
+                            "winner": msg.get("winner_color"),
+                        })
+                    except Exception:
+                        _gomoku_ws_connections[game_id].discard(ws_conn)
+
+    except WebSocketDisconnect:
+        _gomoku_ws_connections[game_id].discard(websocket)
+    except Exception:
+        _gomoku_ws_connections[game_id].discard(websocket)
+
+
 @app.websocket("/ws/greenhouse/{room_id}")
 async def greenhouse_ws(websocket: WebSocket, room_id: int) -> None:
     await socket_manager.connect(room_id, websocket)

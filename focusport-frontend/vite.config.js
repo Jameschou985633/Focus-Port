@@ -4,7 +4,19 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), tailwindcss()],
+  plugins: [
+    vue({
+      template: {
+        compilerOptions: {
+          isCustomElement: (tag) =>
+            (/^Tres[A-Z]/.test(tag) || tag.startsWith('tres-')) &&
+            !['TresCanvas', 'TresCanvasContext', 'TresLeches', 'TresScene'].includes(tag) ||
+            tag === 'primitive'
+        }
+      }
+    }),
+    tailwindcss()
+  ],
   base: './',  // GitHub Pages 相对路径
   server: {
     host: '0.0.0.0',  // 允许局域网访问

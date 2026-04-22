@@ -11,11 +11,13 @@ import './styles/transitions.css'
 
 import App from './App.vue'
 import { router } from './router'
+import TresJS from '@tresjs/core'
 
 const app = createApp(App)
 const pinia = createPinia()
 
 app.use(pinia)
 app.use(router)
+app.use(TresJS)
 
 app.mount('#app')

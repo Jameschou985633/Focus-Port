@@ -1,241 +1,280 @@
-<script setup>
-import { ref, watch, onUnmounted } from 'vue'
+﻿<script setup>
+import { computed, onUnmounted, ref, watch } from 'vue'
 
 const props = defineProps({
-  visible: { type: Boolean, default: false }
+  show: { type: Boolean, default: false },
+  visible: { type: Boolean, default: false },
+  username: { type: String, default: '' }
 })
 
-const emit = defineEmits(['done'])
+const emit = defineEmits(['complete', 'done'])
 
-const SCRIPTS = [
-  // 方案一：硬核指令流
-  { lines: ['身份验证通过。准许接入 FocusPort。'], style: 'command' },
-  // 方案二：星际拓荒流
-  { lines: ['正在脱离现实引力', '跃迁至专注视界。'], style: 'warp' },
-  // 方案三：极客自律流
-  { lines: ['正在过滤信息碎片...', '正在重构时间线...', '绝对专注区已展开。'], style: 'focus' },
-  // 方案四：极简科幻
-  { lines: ['FOCUS PORT : ONLINE'], style: 'minimal' }
-]
+const isVisible = computed(() => props.show || props.visible)
+const isMounted = ref(false)
+const phase = ref('idle')
 
-const displayedLines = ref([])
-const currentLineIdx = ref(0)
-const currentCharIdx = ref(0)
-const isTyping = ref(false)
-const cursorVisible = ref(true)
-const activeStyle = ref('command')
+let timers = []
 
-let typeTimer = null
-let lineTimer = null
-let doneTimer = null
-let blinkTimer = null
-
-watch(() => props.visible, (v) => {
-  if (!v) return
-
-  const script = SCRIPTS[Math.floor(Math.random() * SCRIPTS.length)]
-  activeStyle.value = script.style
-  displayedLines.value = []
-  currentLineIdx.value = 0
-  currentCharIdx.value = 0
-  isTyping.value = true
-  cursorVisible.value = true
-
-  startBlink()
-  typeLine(script.lines, 0)
-})
-
-const startBlink = () => {
-  if (blinkTimer) clearInterval(blinkTimer)
-  blinkTimer = setInterval(() => {
-    cursorVisible.value = !cursorVisible.value
-  }, 530)
+const clearTimers = () => {
+  timers.forEach((timer) => clearTimeout(timer))
+  timers = []
 }
 
-const typeLine = (lines, lineIdx) => {
-  if (lineIdx >= lines.length) {
-    isTyping.value = false
-    doneTimer = setTimeout(() => {
-      clearInterval(blinkTimer)
-      emit('done')
-    }, 600)
+const queue = (callback, delay) => {
+  const timer = setTimeout(callback, delay)
+  timers.push(timer)
+}
+
+const startFlight = () => {
+  clearTimers()
+  isMounted.value = true
+  phase.value = 'verify'
+
+  queue(() => { phase.value = 'expand' }, 360)
+  queue(() => { phase.value = 'ascent' }, 1080)
+  queue(() => { phase.value = 'arrive' }, 2450)
+  queue(() => {
+    emit('complete')
+    emit('done')
+  }, 3300)
+}
+
+watch(isVisible, (value) => {
+  if (value) {
+    startFlight()
     return
   }
 
-  displayedLines.value.push('')
-  currentLineIdx.value = lineIdx
-  currentCharIdx.value = 0
-
-  const text = lines[lineIdx]
-  const speed = activeStyle.value === 'minimal' ? 60 : 45
-
-  typeTimer = setInterval(() => {
-    if (currentCharIdx.value < text.length) {
-      const ci = currentCharIdx.value
-      displayedLines.value.splice(lineIdx, 1, text.slice(0, ci + 1))
-      currentCharIdx.value++
-    } else {
-      clearInterval(typeTimer)
-      lineTimer = setTimeout(() => typeLine(lines, lineIdx + 1), 320)
-    }
-  }, speed)
-}
+  clearTimers()
+  phase.value = 'idle'
+  isMounted.value = false
+})
 
 onUnmounted(() => {
-  clearInterval(typeTimer)
-  clearTimeout(lineTimer)
-  clearTimeout(doneTimer)
-  clearInterval(blinkTimer)
+  clearTimers()
 })
 </script>
 
 <template>
-  <div v-if="visible" class="login-overlay" :class="activeStyle">
-    <div class="pixel-grid"></div>
-    <div class="scan-lines"></div>
-    <div class="terminal-area">
-      <span v-if="activeStyle !== 'minimal'" class="eyebrow">SYSTEM INIT</span>
-      <div class="lines">
-        <p v-for="(line, i) in displayedLines" :key="i" class="type-line">
-          <span>{{ line }}</span>
-          <span v-if="i === currentLineIdx && isTyping && cursorVisible" class="cursor">_</span>
-        </p>
+  <div v-if="isMounted" class="login-flight-overlay" :class="phase" aria-live="polite">
+    <div class="flight-scene">
+      <div class="flight-image"></div>
+      <div class="flight-atmosphere"></div>
+      <div class="flight-grid"></div>
+      <div class="flight-streaks">
+        <span v-for="index in 14" :key="index"></span>
       </div>
-      <span v-if="!isTyping && cursorVisible && activeStyle !== 'minimal'" class="cursor final-cursor">_</span>
+    </div>
+
+    <div class="launch-copy">
+      <strong>下一站<br>专注星港</strong>
     </div>
   </div>
 </template>
 
 <style scoped>
-.login-overlay {
+.login-flight-overlay {
   position: fixed;
   inset: 0;
   z-index: 9999;
   overflow: hidden;
+  color: #f7fbff;
   pointer-events: all;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(47, 216, 255, 0.15), transparent 30%),
-    linear-gradient(180deg, rgba(6, 14, 30, 0.92), rgba(6, 14, 30, 0.98)),
-    #040a18;
-  display: grid;
-  place-items: center;
-  animation: overlayIn 300ms ease forwards;
+  background: #020513;
+  font-family: "Plus Jakarta Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  opacity: 0;
+  animation: overlayFadeIn 260ms ease forwards;
 }
 
-.pixel-grid,
-.scan-lines {
+.flight-scene,
+.flight-image,
+.flight-atmosphere,
+.flight-grid,
+.flight-streaks {
   position: absolute;
   inset: 0;
 }
 
-.pixel-grid {
-  background-image:
-    linear-gradient(rgba(115, 224, 255, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(115, 224, 255, 0.08) 1px, transparent 1px);
-  background-size: 22px 22px;
-  transform: scale(1.1);
-  opacity: 0.4;
+.flight-scene {
+  overflow: hidden;
+  transform-origin: center bottom;
 }
 
-.scan-lines {
-  background: repeating-linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.06) 0,
-    rgba(255, 255, 255, 0.06) 1px,
-    transparent 1px,
-    transparent 6px
-  );
-  mix-blend-mode: screen;
-  animation: scanDrift 1.8s linear infinite;
-}
-
-.terminal-area {
-  position: relative;
-  z-index: 1;
-  text-align: left;
-  max-width: min(560px, 85vw);
-  font-family: 'Roboto Mono', 'Consolas', 'Courier New', monospace;
-}
-
-.eyebrow {
-  display: block;
-  margin-bottom: 14px;
-  font-size: 11px;
-  letter-spacing: 0.28em;
-  color: rgba(156, 230, 255, 0.72);
-  text-transform: uppercase;
-}
-
-.lines {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.type-line {
-  margin: 0;
-  font-size: clamp(16px, 2.8vw, 22px);
-  color: #c8eeff;
-  line-height: 1.5;
-  letter-spacing: 0.02em;
-}
-
-.cursor {
-  color: #5ce3ff;
-  animation: blink 530ms step-end infinite;
-}
-
-.final-cursor {
-  margin-top: 12px;
-  display: inline-block;
-  font-size: 18px;
-}
-
-/* Minimal style overrides */
-.login-overlay.minimal .type-line {
-  font-size: clamp(28px, 5vw, 48px);
-  font-weight: 900;
-  letter-spacing: 0.12em;
-  text-align: center;
-  color: #5ce3ff;
-  text-shadow: 0 0 32px rgba(92, 227, 255, 0.3);
-}
-
-.login-overlay.minimal .lines {
-  align-items: center;
-}
-
-/* Warp style - slightly different tint */
-.login-overlay.warp {
+.flight-image {
   background:
-    radial-gradient(circle at 50% 60%, rgba(109, 92, 255, 0.18), transparent 35%),
-    linear-gradient(180deg, rgba(10, 16, 40, 0.92), rgba(6, 10, 24, 0.98)),
-    #050a1a;
+    linear-gradient(180deg, rgba(3, 7, 22, 0.08), rgba(3, 7, 22, 0.36) 58%, rgba(3, 7, 22, 0.78)),
+    linear-gradient(90deg, rgba(3, 7, 22, 0.28), rgba(3, 7, 22, 0.02) 44%, rgba(3, 7, 22, 0.32)),
+    url('/assets/login-vision-bg.png') center / cover no-repeat,
+    radial-gradient(circle at 45% 35%, rgba(72, 128, 255, 0.45), transparent 36%),
+    linear-gradient(135deg, #152058, #030615 76%);
+  transform: scale(1.02);
+  transform-origin: center bottom;
+  clip-path: inset(0 48% 0 0 round 0);
+  filter: saturate(1.08) contrast(1.06);
+  animation: imageExpand 900ms cubic-bezier(0.19, 1, 0.22, 1) forwards;
 }
 
-/* Focus style - green tint */
-.login-overlay.focus .pixel-grid {
+.flight-atmosphere {
+  background:
+    radial-gradient(circle at 50% 68%, rgba(72, 128, 255, 0.32), transparent 34%),
+    radial-gradient(circle at 52% 8%, rgba(72, 221, 255, 0.34), transparent 26%),
+    linear-gradient(0deg, rgba(2, 5, 19, 0.76), transparent 54%);
+  mix-blend-mode: screen;
+  opacity: 0.66;
+}
+
+.flight-grid {
   background-image:
-    linear-gradient(rgba(99, 255, 173, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(99, 255, 173, 0.06) 1px, transparent 1px);
+    linear-gradient(rgba(180, 223, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(180, 223, 255, 0.08) 1px, transparent 1px);
+  background-size: 72px 72px;
+  opacity: 0.24;
+  mask-image: linear-gradient(0deg, rgba(0, 0, 0, 0.88), transparent 78%);
+  transform-origin: center bottom;
 }
 
-.login-overlay.focus .type-line {
-  color: #a0ffd8;
+.flight-streaks {
+  opacity: 0;
+  transform: perspective(900px) rotateX(62deg) translateY(18vh);
 }
 
-@keyframes overlayIn {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
+.flight-streaks span {
+  position: absolute;
+  bottom: -24vh;
+  width: 2px;
+  height: 34vh;
+  border-radius: 999px;
+  background: linear-gradient(180deg, transparent, rgba(197, 238, 255, 0.92), transparent);
+  box-shadow: 0 0 24px rgba(72, 209, 255, 0.55);
+  animation: lightRush 780ms linear infinite;
 }
 
-@keyframes scanDrift {
-  0% { transform: translateY(-6px); }
-  100% { transform: translateY(6px); }
+.flight-streaks span:nth-child(1) { left: 8%; animation-delay: -0.12s; }
+.flight-streaks span:nth-child(2) { left: 14%; animation-delay: -0.42s; height: 44vh; }
+.flight-streaks span:nth-child(3) { left: 22%; animation-delay: -0.24s; }
+.flight-streaks span:nth-child(4) { left: 31%; animation-delay: -0.64s; height: 48vh; }
+.flight-streaks span:nth-child(5) { left: 39%; animation-delay: -0.18s; }
+.flight-streaks span:nth-child(6) { left: 48%; animation-delay: -0.72s; height: 42vh; }
+.flight-streaks span:nth-child(7) { left: 56%; animation-delay: -0.36s; }
+.flight-streaks span:nth-child(8) { left: 64%; animation-delay: -0.54s; height: 50vh; }
+.flight-streaks span:nth-child(9) { left: 72%; animation-delay: -0.2s; }
+.flight-streaks span:nth-child(10) { left: 80%; animation-delay: -0.68s; height: 46vh; }
+.flight-streaks span:nth-child(11) { left: 88%; animation-delay: -0.3s; }
+.flight-streaks span:nth-child(12) { left: 95%; animation-delay: -0.5s; height: 40vh; }
+.flight-streaks span:nth-child(13) { left: 3%; animation-delay: -0.76s; }
+.flight-streaks span:nth-child(14) { left: 68%; animation-delay: -0.08s; }
+
+.launch-copy {
+  position: absolute;
+  left: clamp(24px, 6vw, 88px);
+  bottom: clamp(34px, 8vh, 92px);
+  z-index: 3;
+  opacity: 0;
+  transform: translateY(24px);
 }
 
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+.launch-copy strong {
+  color: #ffffff;
+  font-size: clamp(40px, 7vw, 92px);
+  line-height: 1.05;
+  font-weight: 950;
+  letter-spacing: -0.08em;
+}
+
+.login-flight-overlay.expand .launch-copy,
+.login-flight-overlay.ascent .launch-copy,
+.login-flight-overlay.arrive .launch-copy {
+  animation: copyIn 620ms cubic-bezier(0.19, 1, 0.22, 1) forwards;
+}
+
+.login-flight-overlay.ascent .flight-scene,
+.login-flight-overlay.arrive .flight-scene {
+  animation: cameraAscent 1650ms cubic-bezier(0.11, 0.76, 0.22, 1) forwards;
+}
+
+.login-flight-overlay.ascent .flight-grid,
+.login-flight-overlay.arrive .flight-grid {
+  animation: gridDrop 900ms linear infinite;
+}
+
+.login-flight-overlay.ascent .flight-streaks,
+.login-flight-overlay.arrive .flight-streaks {
+  opacity: 0.92;
+  transition: opacity 220ms ease;
+}
+
+.login-flight-overlay.arrive::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: radial-gradient(circle at 50% 20%, rgba(228, 247, 255, 0.96), rgba(84, 159, 255, 0.38) 34%, rgba(2, 5, 19, 0.8) 72%);
+  opacity: 0;
+  animation: portalFlash 800ms ease forwards;
+}
+
+@keyframes overlayFadeIn {
+  to { opacity: 1; }
+}
+
+@keyframes imageExpand {
+  0% {
+    clip-path: inset(0 48% 0 0 round 0);
+    transform: translateX(-3vw) scale(1.02);
+  }
+  100% {
+    clip-path: inset(0 0 0 0 round 0);
+    transform: translateX(0) scale(1.04);
+  }
+}
+
+@keyframes copyIn {
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes cameraAscent {
+  0% {
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  58% {
+    transform: translateY(-18vh) scale(1.16);
+    filter: blur(0.4px);
+  }
+  100% {
+    transform: translateY(-38vh) scale(1.34);
+    filter: blur(1.1px);
+  }
+}
+
+@keyframes gridDrop {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 0 144px, 0 144px; }
+}
+
+@keyframes lightRush {
+  from { transform: translateY(0) scaleY(0.55); opacity: 0; }
+  24% { opacity: 0.98; }
+  to { transform: translateY(-118vh) scaleY(1.35); opacity: 0; }
+}
+
+@keyframes portalFlash {
+  0% { opacity: 0; transform: scale(0.94); }
+  45% { opacity: 0.82; transform: scale(1.02); }
+  100% { opacity: 1; transform: scale(1.08); }
+}
+
+@media (max-width: 640px) {
+  .launch-copy {
+    right: 22px;
+    bottom: 34px;
+  }
+
+  .launch-copy strong {
+    font-size: 42px;
+  }
 }
 </style>
