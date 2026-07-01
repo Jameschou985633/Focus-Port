@@ -1,0 +1,66 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Database (local data — do not commit)
+*.db
+.dev-api-state.json
+
+# Local-only Claude / Cursor settings
+.claude/settings.local.json
+.focusport-frontend-inner-git-backup/
+
+# Local caches / bundled third-party downloads
+.external/
+focusport-frontend/.npm-cache/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# Frontend build (keep for deployment)
+# focusport-frontend/dist/
+
+# Environment
+.env
+.env.development
+.env.local
+.env.*.local
+
+# Asset files (too large for git)
+# Downloads/

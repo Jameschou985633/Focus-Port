@@ -1,0 +1,146 @@
+/* Space Theme Global Styles */
+
+:root {
+  /* Colors */
+  --space-bg-dark: #0a0f1a;
+  --space-bg-medium: #0f172a;
+  --space-bg-light: #1e293b;
+  --space-primary: #3b82f6;
+  --space-primary-light: #60a5fa;
+  --space-secondary: #6b7280;
+  --space-success: #10b981;
+  --space-success-light: #34d399;
+  --space-warning: #f59e0b;
+  --space-warning-light: #fbbf24;
+  --space-danger: #ef4444;
+  --space-danger-light: #f87171;
+  --space-text: #ffffff;
+  --space-text-muted: rgba(255, 255, 255, 0.6);
+
+  /* Shadows */
+  --space-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --space-glow-blue: 0 0 20px rgba(59, 130, 246, 0.5);
+  --space-glow-green: 0 0 20px rgba(16, 185, 129, 0.5);
+  --space-glow-yellow: 0 0 20px rgba(245, 158, 11, 0.5);
+
+  /* Borders */
+  --space-border: 2px solid #334155;
+  --space-border-primary: 2px solid #3b82f6;
+  --space-border-radius: 8px;
+}
+
+/* Background */
+.space-bg {
+  background: linear-gradient(135deg, var(--space-bg-dark) 0%, var(--space-bg-medium) 50%, var(--space-bg-dark) 100%);
+  min-height: 100vh;
+}
+
+/* Typography */
+.space-title {
+  font-family: 'Segoe UI', 'Arial', sans-serif;
+  font-weight: 700;
+  color: var(--space-text);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.space-subtitle {
+  font-family: 'Segoe UI', 'Arial', sans-serif;
+  font-weight: 400;
+  color: var(--space-text-muted);
+}
+
+/* Animations */
+@keyframes space-glow {
+  0%, 100% {
+    box-shadow: var(--space-glow-blue);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(59, 130, 246, 0.8);
+  }
+}
+
+@keyframes space-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes space-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Utility Classes */
+.space-glow {
+  animation: space-glow 2s infinite;
+}
+
+.space-float {
+  animation: space-float 3s ease-in-out infinite;
+}
+
+.space-pulse {
+  animation: space-pulse 2s ease-in-out infinite;
+}
+
+/* Form Elements */
+.space-input {
+  background: var(--space-bg-dark);
+  border: var(--space-border);
+  border-radius: var(--space-border-radius);
+  padding: 12px 16px;
+  color: var(--space-text);
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.space-input:focus {
+  outline: none;
+  border-color: var(--space-primary);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+}
+
+.space-select {
+  background: var(--space-bg-dark);
+  border: var(--space-border);
+  border-radius: var(--space-border-radius);
+  padding: 10px 14px;
+  color: var(--space-text);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.space-select:focus {
+  outline: none;
+  border-color: var(--space-primary);
+}
+
+/* Status Indicators */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.status-dot.online {
+  background: var(--space-success);
+  animation: space-pulse 2s infinite;
+}
+
+.status-dot.offline {
+  background: var(--space-secondary);
+}
+
+.status-dot.growing {
+  background: var(--space-warning);
+  animation: space-pulse 1s infinite;
+}

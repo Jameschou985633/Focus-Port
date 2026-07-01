@@ -1,0 +1,136 @@
+:root {
+  --focus-panel-bg: rgba(8, 18, 44, 0.9);
+  --focus-panel-border: rgba(128, 202, 255, 0.75);
+  --focus-text-main: #eef9ff;
+  --focus-text-soft: #9fc9ea;
+  --focus-cyan: #8be9ff;
+  --focus-danger: #ff8c8c;
+}
+
+.focus-hud-panel {
+  background:
+    linear-gradient(180deg, rgba(25, 78, 145, 0.9), rgba(8, 25, 68, 0.94)),
+    var(--focus-panel-bg);
+  border: 2px solid var(--focus-panel-border);
+  box-shadow:
+    0 0 0 2px rgba(7, 35, 74, 0.9) inset,
+    0 18px 48px rgba(6, 14, 35, 0.45),
+    0 0 22px rgba(61, 182, 255, 0.22);
+  color: var(--focus-text-main);
+}
+
+.focus-hud-header {
+  min-height: 58px;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--focus-text-main);
+  text-shadow: 0 2px 0 rgba(7, 23, 52, 0.8);
+  background:
+    linear-gradient(180deg, rgba(52, 139, 221, 0.82), rgba(12, 42, 92, 0.92)),
+    rgba(8, 18, 44, 0.9);
+  border: 1px solid rgba(137, 214, 255, 0.58);
+  border-radius: 16px;
+}
+
+.focus-hud-btn {
+  border: 1px solid rgba(132, 211, 255, 0.5);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(33, 113, 202, 0.95), rgba(12, 46, 111, 0.95)),
+    rgba(10, 26, 64, 0.95);
+  color: var(--focus-text-main);
+  min-height: 44px;
+  padding: 10px 20px;
+  cursor: pointer;
+  font-weight: 700;
+  text-shadow: 0 2px 0 rgba(7, 23, 52, 0.7);
+  transition: transform 0.18s ease, filter 0.18s ease, opacity 0.18s ease;
+  box-shadow:
+    0 0 0 2px rgba(3, 14, 36, 0.28) inset,
+    0 10px 22px rgba(3, 10, 24, 0.3);
+}
+
+.focus-hud-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+}
+
+.focus-hud-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+.focus-hud-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.focus-hud-btn--square {
+  min-width: 56px;
+  min-height: 56px;
+  padding: 8px;
+}
+
+.focus-hud-btn--round {
+  border-radius: 999px;
+}
+
+.focus-hud-btn--small {
+  min-height: 36px;
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+.focus-hud-btn--danger {
+  color: var(--focus-danger);
+}
+
+.focus-hud-close {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  border: 1px solid rgba(132, 211, 255, 0.5);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(33, 113, 202, 0.95), rgba(12, 46, 111, 0.95));
+  color: var(--focus-text-main);
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.18s ease;
+}
+
+.focus-hud-close::after {
+  content: 'x';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.focus-hud-close:hover {
+  transform: scale(1.05);
+}
+
+.focus-hud-input {
+  min-height: 46px;
+  border: 2px solid rgba(119, 198, 255, 0.55);
+  background: linear-gradient(180deg, rgba(7, 36, 76, 0.95), rgba(9, 22, 55, 0.95));
+  color: var(--focus-text-main);
+  border-radius: 14px;
+  padding: 10px 16px;
+  outline: none;
+  box-shadow:
+    0 0 0 2px rgba(3, 14, 36, 0.7) inset,
+    0 0 12px rgba(35, 144, 222, 0.18);
+}
+
+.focus-hud-input::placeholder {
+  color: rgba(184, 224, 255, 0.58);
+}
+
+.focus-hud-overlay {
+  background: rgba(4, 10, 24, 0.72);
+  backdrop-filter: blur(8px);
+}
