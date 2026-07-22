@@ -1115,8 +1115,8 @@ button:disabled { cursor: not-allowed; }
 .vision-logo strong { font-size: 13px; letter-spacing: .22em; }
 .vision-logo small { color: var(--vision-muted); font-size: 11px; letter-spacing: .14em; }
 .vision-menu { flex: 1; overflow-y: auto; padding: 4px 12px 16px; }
-.vision-menu::-webkit-scrollbar,.task-list-scroll::-webkit-scrollbar,.stage-table::-webkit-scrollbar { width: 4px; }
-.vision-menu::-webkit-scrollbar-thumb,.task-list-scroll::-webkit-scrollbar-thumb,.stage-table::-webkit-scrollbar-thumb { border-radius: 99px; background: rgba(72,128,255,.5); }
+.vision-menu::-webkit-scrollbar,.vision-main::-webkit-scrollbar,.task-list-scroll::-webkit-scrollbar,.stage-table::-webkit-scrollbar { width: 4px; }
+.vision-menu::-webkit-scrollbar-thumb,.vision-main::-webkit-scrollbar-thumb,.task-list-scroll::-webkit-scrollbar-thumb,.stage-table::-webkit-scrollbar-thumb { border-radius: 99px; background: rgba(72,128,255,.5); }
 .menu-group { margin-bottom: 10px; border-radius: 18px; padding: 6px; }
 .menu-group.active { background: rgba(255,255,255,.055); }
 .menu-main,.menu-children button,.sidebar-footer button { width: 100%; border: 0; color: white; background: transparent; text-align: left; }
@@ -1133,7 +1133,7 @@ button:disabled { cursor: not-allowed; }
 .sidebar-footer { display: grid; gap: 8px; padding: 14px 16px 18px; }
 .sidebar-footer button { border-radius: 14px; padding: 12px; background: rgba(255,255,255,.055); font-size: 12px; font-weight: 800; }
 .sidebar-footer .logout-link { color: #ffb4bf; }
-.vision-main { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 100vh; margin-left: 288px; overflow: visible; box-sizing: border-box; padding: 26px 28px 28px; }
+.vision-main { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100vh; min-height: 0; margin-left: 288px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; padding: 26px 28px 28px; }
 .vision-topbar { display: grid; flex: 0 0 auto; grid-template-columns: minmax(260px,1fr) auto; gap: 24px; align-items: center; margin-bottom: 18px; }
 .mission-copy p,.panel-heading p,.card-heading span,.metric-card span,.calendar-mini header span,.glass-modal header p { margin: 0; color: rgba(209,226,255,.64); font-size: 11px; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; }
 .mission-copy h1 { margin: 6px 0 5px; font-size: clamp(28px,3vw,42px); line-height: 1; letter-spacing: -.04em; }
@@ -1204,15 +1204,15 @@ button:disabled { cursor: not-allowed; }
 .mini-calendar-grid i.busy { box-shadow: inset 0 -3px 0 var(--vision-blue); }
 .mini-calendar-grid i.today,.mini-calendar-grid i.selected { background: var(--vision-blue); color: white; }
 .calendar-mini small { color: var(--vision-muted); }
-.workbench-grid { display: grid; flex: 1 1 auto; grid-template-columns: minmax(320px,.82fr) minmax(520px,1.18fr); gap: 18px; min-height: 0; }
-.todo-panel,.stages-panel { min-height: 0; height: 100%; padding: 24px; box-sizing: border-box; overflow: hidden; }
+.workbench-grid { display: grid; flex: 0 0 auto; grid-template-columns: minmax(320px,.82fr) minmax(520px,1.18fr); gap: 18px; min-height: 560px; }
+.todo-panel,.stages-panel { min-height: 0; height: auto; padding: 24px; box-sizing: border-box; overflow: hidden; }
 .todo-panel { display: flex; flex-direction: column; }
 .stages-panel { display: flex; flex-direction: column; }
 .panel-heading h2 { margin: 5px 0 0; font-size: 24px; line-height: 1; }
 .panel-heading button { padding: 10px 16px; }
 .date-strip { display: flex; gap: 8px; margin: 20px 0 14px; }
 .date-strip button { border: 1px solid rgba(255,255,255,.13); border-radius: 13px; padding: 8px 11px; background: rgba(255,255,255,.06); color: white; font-size: 12px; font-weight: 800; }
-.task-list-scroll { display: grid; flex: 1 1 auto; height: auto; min-height: 0; align-content: start; gap: 10px; overflow-y: auto; overscroll-behavior: contain; padding-right: 8px; padding-bottom: 12px; scrollbar-gutter: stable; }
+.task-list-scroll { display: grid; flex: 1 1 auto; height: auto; min-height: 280px; max-height: 430px; align-content: start; gap: 10px; overflow-y: auto; overscroll-behavior: contain; padding-right: 8px; padding-bottom: 12px; scrollbar-gutter: stable; }
 .todo-card { display: grid; grid-template-columns: 5px 1fr auto; gap: 12px; align-items: stretch; border: 1px solid rgba(255,255,255,.09); border-radius: 18px; padding: 12px; background: rgba(255,255,255,.055); color: white; text-align: left; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
 .todo-card:hover,.todo-card.selected { transform: translateY(-1px); border-color: rgba(72,128,255,.55); background: rgba(72,128,255,.12); }
 .todo-card.completed { opacity: .62; }
@@ -1245,7 +1245,7 @@ button:disabled { cursor: not-allowed; }
 .scan-line span,.scan-line b { display: block; height: 12px; border-radius: 99px; background: linear-gradient(90deg, rgba(72,128,255,.22), rgba(255,255,255,.16), rgba(72,128,255,.22)); background-size: 220% 100%; animation: scanPulse 1.15s linear infinite; }
 .scan-line b { height: 16px; }
 .scan-loader p { margin: 8px 0 0; color: #9dbaff; font-size: 13px; }
-.stage-table { display: grid; flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; gap: 8px; padding-right: 4px; }
+.stage-table { display: grid; flex: 1 1 auto; min-height: 280px; max-height: 430px; overflow-y: auto; gap: 8px; padding-right: 4px; }
 .stage-row { display: grid; grid-template-columns: 88px minmax(150px,1fr) 116px minmax(180px,.85fr); gap: 12px; align-items: center; border: 1px solid rgba(255,255,255,.1); border-radius: 15px; padding: 12px 14px; background: rgba(255,255,255,.05); color: white; text-align: left; }
 .stage-row.header { position: sticky; top: 0; z-index: 1; color: var(--vision-muted); background: rgba(6,11,40,.94); font-size: 11px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
 .stage-row.done { opacity: .68; }
@@ -1360,6 +1360,7 @@ button:disabled { cursor: not-allowed; }
   .vision-sidebar { position: relative; inset: auto; width: auto; margin: 10px; max-height: none; }
   .vision-menu { max-height: 360px; }
   .vision-main { height: auto; min-height: 0; margin-left: 0; overflow: visible; padding: 18px 14px 32px; }
+  .workbench-grid { min-height: 0; }
   .task-list-scroll { min-height: 260px; max-height: 48vh; }
   .stage-row { grid-template-columns: 1fr; }
   .audit-layout,.modal-grid,.ledger-summary-grid { grid-template-columns: 1fr; }
