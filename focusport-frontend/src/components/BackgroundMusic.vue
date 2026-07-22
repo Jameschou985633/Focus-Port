@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
-const tracks = [
+const defaultTracks = [
   { name: '星际漫步', url: '/audio/space-cadet.ogg' }
 ]
+const CUSTOM_TRACKS_KEY = 'focusport-custom-music-tracks'
+const supportedAudioTypes = ['audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/ogg']
 
 const isPlaying = ref(false)
 const volume = ref(0.3)
@@ -12,9 +14,39 @@ const audio = ref(null)
 const currentTrack = ref(0)
 const isShuffle = ref(false)
 const isLoop = ref(true)
+const customTracks = ref([])
+const urlName = ref('')
+const urlValue = ref('')
+const fileInput = ref(null)
+const objectUrls = []
 
-const currentName = computed(() => tracks[currentTrack.value]?.name || '暂无曲目')
-const hasMultipleTracks = computed(() => tracks.length > 1)
+const tracks = computed(() => [...defaultTracks, ...customTracks.value])
+const currentName = computed(() => tracks.value[currentTrack.value]?.name || '暂无曲目')
+const hasMultipleTracks = computed(() => tracks.value.length > 1)
+
+const saveCustomTracks = () => {
+  const persistentTracks = customTracks.value.filter(track => track.source === 'url')
+  localStorage.setItem(CUSTOM_TRACKS_KEY, JSON.stringify(persistentTracks))
+}
+
+const loadCustomTracks = () => {
+  try {
+    const savedTracks = JSON.parse(localStorage.getItem(CUSTOM_TRACKS_KEY) || '[]')
+    customTracks.value = Array.isArray(savedTracks)
+      ? savedTracks.filter(track => track?.name && track?.url)
+      : []
+  } catch {
+    customTracks.value = []
+  }
+}
+
+const normalizeTrackName = (name, fallback) => (name || fallback).replace(/\.[^/.]+$/, '').trim()
+
+const isSupportedAudioFile = (file) => {
+  if (!file) return false
+  if (supportedAudioTypes.includes(file.type)) return true
+  return /\.(mp3|wav|m4a|ogg)$/i.test(file.name)
+}
 
 const playAudio = () => {
   if (!audio.value) return
@@ -24,10 +56,10 @@ const playAudio = () => {
 }
 
 const loadTrack = (index, autoplay = isPlaying.value) => {
-  if (!audio.value || !tracks[index]) return
+  if (!audio.value || !tracks.value[index]) return
   audio.value.pause()
   currentTrack.value = index
-  audio.value.src = tracks[index].url
+  audio.value.src = tracks.value[index].url
   audio.value.load()
   if (autoplay) playAudio()
   else isPlaying.value = false
@@ -49,8 +81,8 @@ const nextTrack = () => {
     return
   }
   const next = isShuffle.value
-    ? Math.floor(Math.random() * tracks.length)
-    : (currentTrack.value + 1) % tracks.length
+    ? Math.floor(Math.random() * tracks.value.length)
+    : (currentTrack.value + 1) % tracks.value.length
   loadTrack(next, true)
 }
 
@@ -59,7 +91,7 @@ const prevTrack = () => {
     loadTrack(currentTrack.value, true)
     return
   }
-  loadTrack((currentTrack.value - 1 + tracks.length) % tracks.length, true)
+  loadTrack((currentTrack.value - 1 + tracks.value.length) % tracks.value.length, true)
 }
 
 const setVolume = (event) => {
@@ -81,8 +113,53 @@ const toggleLoop = () => {
   if (audio.value) audio.value.loop = isLoop.value
 }
 
+const addUrlTrack = () => {
+  const url = urlValue.value.trim()
+  if (!url) return
+  const name = normalizeTrackName(urlName.value, '自定义音乐')
+  customTracks.value.push({ name, url, source: 'url' })
+  urlName.value = ''
+  urlValue.value = ''
+  saveCustomTracks()
+}
+
+const addFileTrack = (event) => {
+  const files = Array.from(event.target.files || [])
+  files.filter(isSupportedAudioFile).forEach((file) => {
+    const url = URL.createObjectURL(file)
+    objectUrls.push(url)
+    customTracks.value.push({
+      name: normalizeTrackName(file.name, '本地音乐'),
+      url,
+      source: 'file'
+    })
+  })
+  event.target.value = ''
+}
+
+const openFilePicker = () => {
+  if (fileInput.value) fileInput.value.click()
+}
+
+const removeTrack = (index) => {
+  const track = tracks.value[index]
+  if (!track || index < defaultTracks.length) return
+  const customIndex = index - defaultTracks.length
+  const [removedTrack] = customTracks.value.splice(customIndex, 1)
+  if (removedTrack?.source === 'url') saveCustomTracks()
+  if (removedTrack?.source === 'file') URL.revokeObjectURL(removedTrack.url)
+
+  if (currentTrack.value === index) {
+    const nextIndex = Math.min(index, tracks.value.length - 1)
+    loadTrack(nextIndex, isPlaying.value)
+    return
+  }
+  if (currentTrack.value > index) currentTrack.value -= 1
+}
+
 onMounted(() => {
-  audio.value = new Audio(tracks[0].url)
+  loadCustomTracks()
+  audio.value = new Audio(tracks.value[0].url)
   audio.value.loop = isLoop.value
   audio.value.volume = volume.value
   audio.value.addEventListener('ended', () => {
@@ -96,6 +173,7 @@ onUnmounted(() => {
     audio.value.pause()
     audio.value = null
   }
+  objectUrls.forEach(url => URL.revokeObjectURL(url))
 })
 </script>
 
@@ -125,17 +203,39 @@ onUnmounted(() => {
         <span class="vol-icon">高</span>
       </div>
 
+      <div class="custom-music">
+        <div class="custom-title">自定义音乐</div>
+        <div class="url-row">
+          <input v-model="urlName" class="music-input name-input" type="text" placeholder="名称">
+          <input v-model="urlValue" class="music-input" type="url" placeholder="音频链接">
+          <button class="add-btn" type="button" title="添加链接" @click="addUrlTrack">+</button>
+        </div>
+        <div class="file-row">
+          <button class="file-btn" type="button" @click="openFilePicker">选择本地音频</button>
+          <input ref="fileInput" class="file-input" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg" multiple @change="addFileTrack">
+        </div>
+      </div>
+
       <div class="track-list">
-        <button
+        <div
           v-for="(track, index) in tracks"
           :key="track.url"
-          :class="['track-item', { active: index === currentTrack }]"
-          type="button"
-          @click="loadTrack(index, true)"
+          :class="['track-item', { active: index === currentTrack, removable: index >= defaultTracks.length }]"
         >
-          {{ index === currentTrack ? '♪' : '♬' }} {{ track.name }}
-        </button>
-        <div class="track-note">已隐藏未找到音频文件的曲目</div>
+          <button class="track-select" type="button" @click="loadTrack(index, true)">
+            {{ index === currentTrack ? '♪' : '♬' }} {{ track.name }}
+          </button>
+          <button
+            v-if="index >= defaultTracks.length"
+            class="remove-track"
+            type="button"
+            title="移除曲目"
+            @click="removeTrack(index)"
+          >
+            ×
+          </button>
+        </div>
+        <div class="track-note">音频链接会保存在本机浏览器，本地文件刷新后需重新选择</div>
       </div>
     </div>
   </div>
@@ -183,7 +283,7 @@ onUnmounted(() => {
 }
 
 .music-controls {
-  min-width: 220px;
+  width: min(320px, calc(100vw - 40px));
   border: 1px solid rgba(59, 130, 246, 0.3);
   border-radius: 16px;
   padding: 14px;
@@ -286,6 +386,81 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+.custom-music {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.custom-title {
+  color: rgba(222, 240, 255, 0.78);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.url-row {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) 32px;
+  gap: 6px;
+}
+
+.music-input {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 0 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #eef7ff;
+  font-size: 12px;
+  outline: none;
+}
+
+.music-input::placeholder {
+  color: rgba(222, 240, 255, 0.42);
+}
+
+.music-input:focus {
+  border-color: rgba(74, 222, 128, 0.55);
+}
+
+.add-btn,
+.file-btn {
+  border: 0;
+  border-radius: 8px;
+  background: rgba(74, 222, 128, 0.18);
+  color: #dcfce7;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.add-btn {
+  height: 32px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.file-row {
+  display: flex;
+}
+
+.file-btn {
+  width: 100%;
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.add-btn:hover,
+.file-btn:hover {
+  background: rgba(74, 222, 128, 0.3);
+}
+
+.file-input {
+  display: none;
+}
+
 .track-list {
   display: flex;
   flex-direction: column;
@@ -296,15 +471,17 @@ onUnmounted(() => {
 
 .track-item {
   width: 100%;
-  border: 0;
   border-radius: 8px;
-  padding: 7px 10px;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(222, 240, 255, 0.7);
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
   transition: all 0.15s;
+}
+
+.track-item.removable {
+  grid-template-columns: minmax(0, 1fr) 28px;
 }
 
 .track-item:hover {
@@ -315,6 +492,37 @@ onUnmounted(() => {
   background: rgba(59, 130, 246, 0.15);
   color: #93c5fd;
   font-weight: 700;
+}
+
+.track-select,
+.remove-track {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.track-select {
+  min-width: 0;
+  padding: 7px 10px;
+  overflow: hidden;
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remove-track {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.remove-track:hover {
+  background: rgba(248, 113, 113, 0.16);
+  color: #fecaca;
 }
 
 .track-note {
