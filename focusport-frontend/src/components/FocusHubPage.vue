@@ -839,8 +839,6 @@ const submitAuditReport = async () => {
 const anyModalOpen = computed(() => taskModalOpen.value || calendarModalOpen.value || computeLedgerOpen.value || auditModalOpen.value)
 
 onMounted(async () => {
-  document.documentElement.classList.add('focus-home-locked')
-  document.body.classList.add('focus-home-locked')
   try {
     focusHubStore.hydrate(userStore.username)
     dimensionStore.rehydrate()
@@ -869,8 +867,6 @@ watch(selectedTodoTaskId, () => { syncSelectedTaskDuration() })
 watch(auditModalOpen, (open) => { if (!open) resetAuditFlow() })
 onUnmounted(() => {
   document.body.style.overflow = ''
-  document.documentElement.classList.remove('focus-home-locked')
-  document.body.classList.remove('focus-home-locked')
 })
 </script>
 
@@ -1100,11 +1096,10 @@ onUnmounted(() => {
   --vision-blue-2: #4880ff;
   --vision-text: #ffffff;
   --vision-muted: #a0aec0;
-  height: 100vh;
   min-height: 100vh;
   width: 100%;
   overflow-x: hidden;
-  overflow-y: hidden;
+  overflow-y: visible;
   color: var(--vision-text);
   background: radial-gradient(circle at 50% 28%, rgba(0,117,255,.86), transparent 33%), radial-gradient(circle at 82% 14%, rgba(24,206,255,.18), transparent 28%), linear-gradient(166deg, #0f123b 14%, #090d2e 56%, #020515 86%);
   font-family: "Plus Jakarta Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif;
@@ -1113,18 +1108,6 @@ onUnmounted(() => {
 button,input,select,textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
-:global(html.focus-home-locked),
-:global(body.focus-home-locked) {
-  width: 100%;
-  height: 100%;
-  overflow: hidden !important;
-}
-:global(body.focus-home-locked #app) {
-  width: 100%;
-  height: 100dvh;
-  min-height: 100dvh;
-  overflow: hidden;
-}
 .glass-card,.glass-modal,.vision-sidebar { border: 1px solid var(--vision-line); background: linear-gradient(145deg, rgba(6,11,40,.92), rgba(10,14,35,.54)); box-shadow: 0 24px 80px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.1); backdrop-filter: blur(34px); -webkit-backdrop-filter: blur(34px); }
 .vision-sidebar { position: fixed; inset: 10px auto 10px 10px; z-index: 42; width: 264px; display: flex; flex-direction: column; overflow: hidden; border-radius: 20px; }
 .vision-logo { display: grid; grid-template-columns: 42px 1fr; gap: 12px; align-items: center; margin: 18px 16px 14px; padding: 12px; color: white; border: 0; border-bottom: 1px solid rgba(255,255,255,.14); background: transparent; text-align: left; }
@@ -1150,7 +1133,7 @@ button:disabled { cursor: not-allowed; }
 .sidebar-footer { display: grid; gap: 8px; padding: 14px 16px 18px; }
 .sidebar-footer button { border-radius: 14px; padding: 12px; background: rgba(255,255,255,.055); font-size: 12px; font-weight: 800; }
 .sidebar-footer .logout-link { color: #ffb4bf; }
-.vision-main { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100vh; min-height: 0; margin-left: 288px; overflow: hidden; box-sizing: border-box; padding: 26px 28px 28px; }
+.vision-main { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 100vh; margin-left: 288px; overflow: visible; box-sizing: border-box; padding: 26px 28px 28px; }
 .vision-topbar { display: grid; flex: 0 0 auto; grid-template-columns: minmax(260px,1fr) auto; gap: 24px; align-items: center; margin-bottom: 18px; }
 .mission-copy p,.panel-heading p,.card-heading span,.metric-card span,.calendar-mini header span,.glass-modal header p { margin: 0; color: rgba(209,226,255,.64); font-size: 11px; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; }
 .mission-copy h1 { margin: 6px 0 5px; font-size: clamp(28px,3vw,42px); line-height: 1; letter-spacing: -.04em; }
@@ -1373,10 +1356,10 @@ button:disabled { cursor: not-allowed; }
   .vision-dashboard-grid,.workbench-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
-  .focus-home-shell { height: 100vh; overflow-y: hidden; }
+  .focus-home-shell { min-height: 100vh; overflow-y: visible; }
   .vision-sidebar { position: relative; inset: auto; width: auto; margin: 10px; max-height: none; }
   .vision-menu { max-height: 360px; }
-  .vision-main { height: auto; min-height: 0; margin-left: 0; overflow-y: auto; padding: 18px 14px 32px; }
+  .vision-main { height: auto; min-height: 0; margin-left: 0; overflow: visible; padding: 18px 14px 32px; }
   .task-list-scroll { min-height: 260px; max-height: 48vh; }
   .stage-row { grid-template-columns: 1fr; }
   .audit-layout,.modal-grid,.ledger-summary-grid { grid-template-columns: 1fr; }
