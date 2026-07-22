@@ -128,7 +128,7 @@ export const leaderboardApi = {
 export const friendApi = {
   request: (userUsername, friendUsername) =>
     api.post('/api/friends/request', { user_username: userUsername, friend_username: friendUsername }),
-  respond: (friendshipId, status) => api.post('/api/friends/respond', { friendship_id: friendshipId, status }),
+  respond: (friendshipId, status, username) => api.post('/api/friends/respond', { friendship_id: friendshipId, status, username }),
   list: (username) => api.get(`/api/friends/${username}`),
   delete: (userUsername, friendUsername) =>
     api.delete('/api/friends', { data: { user_username: userUsername, friend_username: friendUsername } })

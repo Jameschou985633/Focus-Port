@@ -1417,6 +1417,7 @@ class FriendRequestPayload(BaseModel):
 class FriendRespondPayload(BaseModel):
     friendship_id: int
     status: str
+    username: str
 
 
 class FriendDeletePayload(BaseModel):
@@ -2832,7 +2833,17 @@ def list_friends(username: str) -> dict[str, Any]:
     normalized = []
     for row in rows:
         other = row["friend_username"] if row["user_username"] == username else row["user_username"]
-        normalized.append({"id": row["id"], "user_username": row["user_username"], "friend_username": other, "status": row["status"], "created_at": row["created_at"]})
+        request_direction = "outgoing" if row["user_username"] == username else "incoming"
+        normalized.append({
+            "id": row["id"],
+            "user_username": row["user_username"],
+            "friend_username": other,
+            "requester_username": row["user_username"],
+            "recipient_username": row["friend_username"],
+            "request_direction": request_direction,
+            "status": row["status"],
+            "created_at": row["created_at"],
+        })
     return {"success": True, "friends": normalized}
 
 
@@ -2855,7 +2866,17 @@ def request_friend(payload: FriendRequestPayload) -> dict[str, Any]:
 @app.post("/api/friends/respond")
 def respond_friend(payload: FriendRespondPayload) -> dict[str, Any]:
     status = payload.status if payload.status in {"accepted", "rejected"} else "rejected"
+    username = payload.username.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="用户名不能为空")
     with closing(get_conn()) as conn:
+        friendship = conn.execute("SELECT id, friend_username, status FROM Friendships WHERE id = ?", (payload.friendship_id,)).fetchone()
+        if not friendship:
+            raise HTTPException(status_code=404, detail="好友请求不存在")
+        if friendship["status"] != "pending":
+            raise HTTPException(status_code=400, detail="好友请求已处理")
+        if friendship["friend_username"] != username:
+            raise HTTPException(status_code=403, detail="只有请求接收方可以处理好友请求")
         conn.execute("UPDATE Friendships SET status = ? WHERE id = ?", (status, payload.friendship_id))
         conn.commit()
     return {"success": True}

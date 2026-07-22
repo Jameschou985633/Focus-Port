@@ -247,10 +247,14 @@ await saveState()
 
 const normalizeFriendship = (entry, username) => {
   const other = entry.user_username === username ? entry.friend_username : entry.user_username
+  const requestDirection = entry.user_username === username ? 'outgoing' : 'incoming'
   return {
     id: entry.id,
     user_username: entry.user_username,
     friend_username: other,
+    requester_username: entry.user_username,
+    recipient_username: entry.friend_username,
+    request_direction: requestDirection,
     status: entry.status,
     created_at: entry.created_at
   }
@@ -1285,9 +1289,13 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req)
       const friendshipId = Number(body.friendship_id)
       const status = body.status === 'accepted' ? 'accepted' : 'rejected'
+      const username = String(body.username || '').trim()
       const result = await withStateWrite(async () => {
+        if (!username) return { status: 400, payload: { detail: '用户名不能为空' } }
         const friendship = state.friends.find((entry) => Number(entry.id) === friendshipId)
         if (!friendship) return { status: 404, payload: { detail: '好友请求不存在' } }
+        if (friendship.status !== 'pending') return { status: 400, payload: { detail: '好友请求已处理' } }
+        if (friendship.friend_username !== username) return { status: 403, payload: { detail: '只有请求接收方可以处理好友请求' } }
         friendship.status = status
         return { status: 200, payload: { success: true } }
       })

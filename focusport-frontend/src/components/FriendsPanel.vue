@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { friendApi } from '../api'
 import { useUserStore } from '../stores/user'
@@ -9,6 +9,7 @@ const userStore = useUserStore()
 
 const friends = ref([])
 const pendingRequests = ref([])
+const sentRequests = ref([])
 const isLoading = ref(false)
 const showAddFriend = ref(false)
 const newFriendName = ref('')
@@ -17,8 +18,10 @@ const loadFriends = async () => {
   isLoading.value = true
   try {
     const res = await friendApi.list(userStore.username)
-    friends.value = res.data.friends?.filter(f => f.status === 'accepted') || []
-    pendingRequests.value = res.data.friends?.filter(f => f.status === 'pending') || []
+    const records = res.data.friends || []
+    friends.value = records.filter(f => f.status === 'accepted')
+    pendingRequests.value = records.filter(f => f.status === 'pending' && f.request_direction === 'incoming')
+    sentRequests.value = records.filter(f => f.status === 'pending' && f.request_direction === 'outgoing')
   } catch (error) {
     console.error('加载好友失败:', error)
   } finally {
@@ -41,7 +44,7 @@ const sendRequest = async () => {
 
 const respondRequest = async (reqId, action) => {
   try {
-    await friendApi.respond(reqId, action === 'accept' ? 'accepted' : 'rejected')
+    await friendApi.respond(reqId, action === 'accept' ? 'accepted' : 'rejected', userStore.username)
     loadFriends()
   } catch (error) {
     alert('操作失败: ' + (error.response?.data?.detail || error.message))
@@ -67,6 +70,7 @@ const openPK = (friendUsername) => {
 }
 
 const goBack = () => router.push('/')
+const pendingCount = computed(() => pendingRequests.value.length + sentRequests.value.length)
 
 onMounted(() => loadFriends())
 </script>
@@ -80,15 +84,25 @@ onMounted(() => loadFriends())
     </div>
 
     <!-- 待处理请求 -->
-    <div v-if="pendingRequests.length > 0" class="section">
-      <h3>待处理请求 ({{ pendingRequests.length }})</h3>
+    <div v-if="pendingCount > 0" class="section">
+      <h3>好友请求 ({{ pendingCount }})</h3>
       <div class="friend-list">
         <div v-for="req in pendingRequests" :key="req.id" class="friend-item pending">
           <span class="friend-avatar">👤</span>
-          <span class="friend-name">{{ req.friend_username }}</span>
+          <div class="friend-info">
+            <span class="friend-name">{{ req.friend_username }}</span>
+            <span class="friend-status pending-label">请求添加你为好友</span>
+          </div>
           <div class="friend-actions">
             <button class="accept-btn" @click="respondRequest(req.id, 'accept')">接受</button>
             <button class="reject-btn" @click="respondRequest(req.id, 'reject')">拒绝</button>
+          </div>
+        </div>
+        <div v-for="req in sentRequests" :key="req.id" class="friend-item outgoing">
+          <span class="friend-avatar">⏳</span>
+          <div class="friend-info">
+            <span class="friend-name">{{ req.friend_username }}</span>
+            <span class="friend-status pending-label">已发送，等待对方同意</span>
           </div>
         </div>
       </div>
@@ -203,6 +217,10 @@ h1 { margin: 0; font-size: 24px; }
   background: rgba(251, 191, 36, 0.15);
 }
 
+.friend-item.outgoing {
+  background: rgba(59, 130, 246, 0.14);
+}
+
 .friend-avatar {
   width: 40px;
   height: 40px;
@@ -217,6 +235,7 @@ h1 { margin: 0; font-size: 24px; }
 .friend-info { flex: 1; }
 .friend-name { display: block; font-weight: 500; }
 .friend-status { font-size: 12px; color: #4ade80; }
+.pending-label { color: rgba(255, 255, 255, 0.64); }
 
 .friend-actions { display: flex; gap: 8px; }
 .action-btn, .accept-btn, .reject-btn {
