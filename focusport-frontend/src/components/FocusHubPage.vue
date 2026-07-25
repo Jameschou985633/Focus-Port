@@ -18,9 +18,10 @@ const mailStore = useMailStore()
 const taskStore = useTaskStore()
 const { decomposeGoal } = useGoalDecomposer()
 
-const durationOptions = [15, 25, 40, 60]
+const durationOptions = [15, 25, 40, 60, 90, 120]
+const MIN_FOCUS_MINUTES = 5
+const MAX_FOCUS_MINUTES = 180
 const selectedDuration = ref(25)
-const selectedDurationIndex = ref(1)
 const isActionHydrating = ref(true)
 const isStartingFocus = ref(false)
 const isTaskLoading = ref(false)
@@ -295,8 +296,8 @@ const focusSubject = computed(() => selectedTodoTask.value?.title || 'Focus Sess
 const focusGoalTitle = computed(() => selectedTodoTask.value?.category || 'Today Focus')
 const focusActionTitle = computed(() => selectedTodoTask.value?.title || '请选择一个待办任务')
 const showFocusGoal = computed(() => Boolean(focusGoalTitle.value && focusGoalTitle.value !== focusActionTitle.value))
-const durationProgress = computed(() => `${(selectedDurationIndex.value / Math.max(1, durationOptions.length - 1)) * 100}%`)
-const durationTickPosition = (index) => `${(index / Math.max(1, durationOptions.length - 1)) * 100}%`
+const durationProgress = computed(() => `${((selectedDuration.value - MIN_FOCUS_MINUTES) / (MAX_FOCUS_MINUTES - MIN_FOCUS_MINUTES)) * 100}%`)
+const durationTickPosition = (minutes) => `${((minutes - MIN_FOCUS_MINUTES) / (MAX_FOCUS_MINUTES - MIN_FOCUS_MINUTES)) * 100}%`
 const pomodoroReadyLabel = computed(() => {
   if (selectedTaskIsDone.value) return '该任务已完成，请选择其他日程'
   if (selectedTodoTask.value) return `${selectedTodoTask.value.title} · ${selectedDuration.value} 分钟`
@@ -305,13 +306,12 @@ const pomodoroReadyLabel = computed(() => {
 
 const closestDurationOption = (minutes) => {
   const target = Number(minutes)
-  const closestIndex = durationOptions.reduce((bestIndex, option, index) => Math.abs(option - target) < Math.abs(durationOptions[bestIndex] - target) ? index : bestIndex, 0)
-  return { index: closestIndex, minutes: durationOptions[closestIndex] }
+  const clamped = Math.max(MIN_FOCUS_MINUTES, Math.min(MAX_FOCUS_MINUTES, Math.round(Number.isFinite(target) ? target : 25)))
+  return { minutes: clamped }
 }
 
 const applyDurationState = (minutes) => {
   const next = closestDurationOption(minutes)
-  selectedDurationIndex.value = next.index
   selectedDuration.value = next.minutes
   return next.minutes
 }
@@ -657,7 +657,7 @@ const handleDurationSelect = (minutes) => {
   else focusHubStore.setFocusMinutes(normalizedMinutes)
 }
 
-const handleDurationDrag = (event) => { handleDurationSelect(durationOptions[Number(event.target.value)] || selectedDuration.value) }
+const handleDurationDrag = (event) => { handleDurationSelect(Number(event.target.value) || selectedDuration.value) }
 const handleStartFocus = async () => {
   if (focusActionDisabled.value) return
   isStartingFocus.value = true
@@ -1053,8 +1053,9 @@ onUnmounted(() => {
               <div class="setup-heading"><span>专注时长</span><strong>{{ selectedDuration }} min</strong></div>
               <div class="duration-slider" :class="{ locked: focusHubStore.pomodoro.isRunning || isStartingFocus }" :style="{ '--duration-progress': durationProgress }">
                 <div class="duration-track" aria-hidden="true" />
-                <input v-model.number="selectedDurationIndex" type="range" min="0" :max="durationOptions.length - 1" step="1" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" aria-label="Pomodoro duration" @input="handleDurationDrag" @change="handleDurationDrag">
-                <div class="duration-ticks"><button v-for="(m, index) in durationOptions" :key="m" type="button" :class="{ active: selectedDurationIndex === index }" :style="{ '--tick-position': durationTickPosition(index) }" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" :aria-label="`选择 ${m} 分钟`" @click="handleDurationSelect(m)"><span /><b>{{ m }}</b></button></div>
+                <input v-model.number="selectedDuration" type="range" :min="MIN_FOCUS_MINUTES" :max="MAX_FOCUS_MINUTES" step="1" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" aria-label="Pomodoro duration" @input="handleDurationDrag" @change="handleDurationDrag">
+                <div class="duration-range-labels"><span>{{ MIN_FOCUS_MINUTES }} min</span><span>{{ MAX_FOCUS_MINUTES }} min</span></div>
+                <div class="duration-ticks"><button v-for="m in durationOptions" :key="m" type="button" :class="{ active: selectedDuration === m }" :style="{ '--tick-position': durationTickPosition(m) }" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" :aria-label="`选择 ${m} 分钟`" @click="handleDurationSelect(m)"><span /><b>{{ m }}</b></button></div>
               </div>
               <div class="pomodoro-summary">
                 <span>当前配置</span>
@@ -1257,7 +1258,8 @@ button:disabled { cursor: not-allowed; }
 .duration-slider input::-moz-range-track { height: 8px; border: 0; border-radius: 99px; background: transparent; }
 .duration-slider input::-moz-range-progress { height: 8px; border-radius: 99px; background: transparent; }
 .duration-slider input::-moz-range-thumb { width: var(--duration-thumb); height: var(--duration-thumb); border: 3px solid #fff; border-radius: 50%; background: var(--vision-blue); box-shadow: 0 5px 16px rgba(0,117,255,.42); }
-.duration-ticks { position: relative; height: 30px; margin: 2px var(--duration-pad) 0; }
+.duration-range-labels { display: flex; justify-content: space-between; margin: 2px var(--duration-pad) 0; color: var(--vision-muted); font-size: 11px; font-weight: 800; }
+.duration-ticks { position: relative; height: 30px; margin: 4px var(--duration-pad) 0; }
 .duration-ticks button { position: absolute; left: var(--tick-position); display: grid; width: 34px; transform: translateX(-50%); justify-items: center; gap: 3px; border: 0; padding: 0; background: transparent; color: var(--vision-muted); font-size: 11px; cursor: pointer; }
 .duration-ticks button:disabled { cursor: not-allowed; }
 .duration-ticks button span { width: 6px; height: 6px; border-radius: 99px; background: rgba(255,255,255,.24); }
