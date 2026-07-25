@@ -67,13 +67,27 @@ const taskForm = ref({
   scheduledDate: '',
   scheduledTime: '10:00',
   category: 'FocusPort',
-  accent: '#4880FF'
+  accent: '#4880FF',
+  durationMinutes: 25,
+  priority: '中',
+  reminderMinutes: 15,
+  recurrence: 'none',
+  recurrenceCount: 1
 })
 
 const accentOptions = ['#4880FF', '#7551E9', '#E951BF', '#FF9E58', '#00B69B']
+const priorityOptions = ['低', '中', '高']
+const reminderOptions = [0, 5, 15, 30, 60]
+const recurrenceOptions = [
+  { value: 'none', label: '不重复' },
+  { value: 'daily', label: '每天' },
+  { value: 'weekly', label: '每周' },
+  { value: 'monthly', label: '每月' }
+]
 const auditCategories = ['学习', '工作', '社交', '娱乐', '游戏', '其他']
 const dateKeyPattern = /^\d{4}-\d{2}-\d{2}$/
 const weekdayLabels = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+const priorityRank = { '高': 0, '中': 1, '低': 2 }
 const STAGE_STORAGE_PREFIX = 'focusport.focushub.taskStages.v1'
 const intensityStyleMap = { weak: 'conservative', medium: 'balanced', strong: 'sprint' }
 const intensityLabels = { weak: '弱', medium: '中', strong: '强' }
@@ -133,6 +147,10 @@ const normalizeTask = (task = {}) => {
   const isCompleted = Boolean(task.isCompleted ?? task.is_completed)
   const scheduledDate = normalizeDateKey(task.scheduledDate || task.scheduled_date || task.createdAt || task.created_at)
   const status = isCompleted ? 'done' : ['in_progress', 'todo'].includes(task.status) ? task.status : 'todo'
+  const durationMinutes = Math.max(1, Math.min(1440, Number(task.durationMinutes || task.duration_minutes || 25)))
+  const reminderMinutes = Math.max(0, Math.min(10080, Number(task.reminderMinutes || task.reminder_minutes || 0)))
+  const priority = priorityOptions.includes(task.priority) ? task.priority : '中'
+  const recurrence = recurrenceOptions.some(option => option.value === task.recurrence) ? task.recurrence : 'none'
   return {
     id: Number(task.id),
     title: String(task.title || task.content || '').trim(),
@@ -142,13 +160,65 @@ const normalizeTask = (task = {}) => {
     scheduledTime: String(task.scheduledTime || task.scheduled_time || '').slice(0, 5),
     category: String(task.category || '').trim() || 'FocusPort',
     accent: /^#[0-9a-f]{6}$/i.test(String(task.accent || '')) ? task.accent : '#4880FF',
+    durationMinutes,
+    priority,
+    reminderMinutes,
+    recurrence,
     createdAt: String(task.createdAt || task.created_at || '')
   }
 }
 
+const compareScheduleTasks = (left, right) => {
+  if (Boolean(left.isCompleted) !== Boolean(right.isCompleted)) return left.isCompleted ? 1 : -1
+  const leftTime = left.scheduledTime || '99:99'
+  const rightTime = right.scheduledTime || '99:99'
+  if (leftTime !== rightTime) return leftTime.localeCompare(rightTime)
+  const leftPriority = priorityRank[left.priority] ?? 1
+  const rightPriority = priorityRank[right.priority] ?? 1
+  if (leftPriority !== rightPriority) return leftPriority - rightPriority
+  return String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
+}
+
 const selectedTodoTask = computed(() => todoTasks.value.find((task) => String(task.id) === String(selectedTodoTaskId.value)) || null)
 const selectedTaskIsDone = computed(() => Boolean(selectedTodoTask.value?.isCompleted || selectedTodoTask.value?.status === 'done'))
-const visibleTasks = computed(() => todoTasks.value.filter((task) => task.scheduledDate === selectedDateKey.value))
+const visibleTasks = computed(() => todoTasks.value.filter((task) => task.scheduledDate === selectedDateKey.value).sort(compareScheduleTasks))
+
+const addRecurringDate = (dateKey, recurrence, offset) => {
+  const date = new Date(`${dateKey}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return dateKey
+  if (recurrence === 'daily') date.setDate(date.getDate() + offset)
+  else if (recurrence === 'weekly') date.setDate(date.getDate() + offset * 7)
+  else if (recurrence === 'monthly') date.setMonth(date.getMonth() + offset)
+  return toDateKey(date)
+}
+
+const scheduleRange = (task) => {
+  if (!task?.scheduledDate || !task?.scheduledTime) return null
+  const start = new Date(`${task.scheduledDate}T${task.scheduledTime}:00`)
+  if (Number.isNaN(start.getTime())) return null
+  const end = new Date(start.getTime() + Math.max(1, Number(task.durationMinutes || 25)) * 60000)
+  return { start, end }
+}
+
+const findScheduleConflicts = (candidate, tasks = todoTasks.value) => {
+  const candidateRange = scheduleRange(candidate)
+  if (!candidateRange) return []
+  return tasks.filter((task) => {
+    if (task.isCompleted || task.scheduledDate !== candidate.scheduledDate) return false
+    const existingRange = scheduleRange(task)
+    if (!existingRange) return false
+    return candidateRange.start < existingRange.end && candidateRange.end > existingRange.start
+  })
+}
+
+const formatTaskMeta = (task) => {
+  const time = task.scheduledTime || '未定时间'
+  const recurrence = recurrenceOptions.find(option => option.value === task.recurrence)?.label || '不重复'
+  const reminder = Number(task.reminderMinutes || 0) > 0 ? `提前${task.reminderMinutes}分提醒` : '不提醒'
+  const parts = [task.category, time, `${task.durationMinutes}分钟`, `${task.priority}优先级`, reminder]
+  if (task.recurrence !== 'none') parts.push(`${recurrence}重复`)
+  return parts.join(' · ')
+}
 
 const tasksByDate = computed(() => {
   const map = new Map()
@@ -156,6 +226,7 @@ const tasksByDate = computed(() => {
     if (!map.has(task.scheduledDate)) map.set(task.scheduledDate, [])
     map.get(task.scheduledDate).push(task)
   })
+  map.forEach((tasks) => tasks.sort(compareScheduleTasks))
   return map
 })
 
@@ -579,7 +650,18 @@ const loadTodoTasks = async () => {
 }
 
 const openTaskModal = (dateKey = selectedDateKey.value) => {
-  taskForm.value = { content: '', scheduledDate: normalizeDateKey(dateKey || todayDateKey()), scheduledTime: '10:00', category: 'FocusPort', accent: '#4880FF' }
+  taskForm.value = {
+    content: '',
+    scheduledDate: normalizeDateKey(dateKey || todayDateKey()),
+    scheduledTime: '10:00',
+    category: 'FocusPort',
+    accent: '#4880FF',
+    durationMinutes: 25,
+    priority: '中',
+    reminderMinutes: 15,
+    recurrence: 'none',
+    recurrenceCount: 1
+  }
   taskError.value = ''
   taskModalOpen.value = true
 }
@@ -589,22 +671,60 @@ const closeTaskModal = () => { taskModalOpen.value = false }
 const createTodoTask = async () => {
   const content = String(taskForm.value.content || '').trim()
   const scheduledDate = normalizeDateKey(taskForm.value.scheduledDate, selectedDateKey.value || todayDateKey())
+  const durationMinutes = Math.max(1, Math.min(1440, Number(taskForm.value.durationMinutes || 25)))
+  const reminderMinutes = Math.max(0, Math.min(10080, Number(taskForm.value.reminderMinutes || 0)))
+  const recurrence = recurrenceOptions.some(option => option.value === taskForm.value.recurrence) ? taskForm.value.recurrence : 'none'
+  const recurrenceCount = recurrence === 'none' ? 1 : Math.max(1, Math.min(12, Number(taskForm.value.recurrenceCount || 1)))
   if (!content) {
     taskError.value = '请输入任务内容。'
     return
   }
+  const candidateTasks = Array.from({ length: recurrenceCount }, (_, index) => ({
+    title: content,
+    scheduledDate: addRecurringDate(scheduledDate, recurrence, index),
+    scheduledTime: taskForm.value.scheduledTime || '',
+    durationMinutes,
+    priority: taskForm.value.priority || '中',
+    recurrence
+  }))
+  const conflicts = candidateTasks.flatMap((candidate) => findScheduleConflicts(candidate).map((task) => ({ candidate, task })))
+  if (conflicts.length) {
+    const preview = conflicts.slice(0, 3).map(({ candidate, task }) => `${candidate.scheduledDate} ${candidate.scheduledTime} 与「${task.title}」重叠`).join('\n')
+    const confirmed = window.confirm(`检测到 ${conflicts.length} 个时间冲突：\n${preview}${conflicts.length > 3 ? '\n...' : ''}\n\n仍然创建吗？`)
+    if (!confirmed) return
+  }
   isTaskSubmitting.value = true
   taskError.value = ''
   try {
-    const response = await taskApi.add(username.value, content, {
-      scheduledDate,
-      scheduledTime: taskForm.value.scheduledTime || '',
-      status: 'todo',
-      category: taskForm.value.category || '',
-      accent: taskForm.value.accent || '#4880FF'
-    })
-    const created = normalizeTask(response.data?.task || { id: response.data?.task_id, content, scheduled_date: scheduledDate, scheduled_time: taskForm.value.scheduledTime, category: taskForm.value.category, accent: taskForm.value.accent })
-    todoTasks.value = [created, ...todoTasks.value.filter((task) => task.id !== created.id)]
+    const createdTasks = []
+    for (const candidate of candidateTasks) {
+      const response = await taskApi.add(username.value, content, {
+        scheduledDate: candidate.scheduledDate,
+        scheduledTime: candidate.scheduledTime,
+        status: 'todo',
+        category: taskForm.value.category || '',
+        accent: taskForm.value.accent || '#4880FF',
+        durationMinutes,
+        priority: candidate.priority,
+        reminderMinutes,
+        recurrence
+      })
+      createdTasks.push(normalizeTask(response.data?.task || {
+        id: response.data?.task_id,
+        content,
+        scheduled_date: candidate.scheduledDate,
+        scheduled_time: candidate.scheduledTime,
+        category: taskForm.value.category,
+        accent: taskForm.value.accent,
+        duration_minutes: durationMinutes,
+        priority: candidate.priority,
+        reminder_minutes: reminderMinutes,
+        recurrence
+      }))
+    }
+    const createdIds = new Set(createdTasks.map((task) => task.id))
+    todoTasks.value = [...createdTasks, ...todoTasks.value.filter((task) => !createdIds.has(task.id))]
+    const created = createdTasks[0]
     selectedDateKey.value = created.scheduledDate
     selectedTodoTaskId.value = String(created.id)
     syncSelectedTaskDuration()
@@ -977,7 +1097,7 @@ onUnmounted(() => {
             <div class="task-list-scroll">
               <button v-for="task in visibleTasks" :key="task.id" type="button" class="todo-card" :class="{ selected: String(task.id) === String(selectedTodoTaskId), completed: task.isCompleted }" @click="selectTask(task)">
                 <span class="task-accent" :style="{ background: task.accent }" />
-                <span class="todo-body"><small>{{ task.category }} · {{ task.scheduledTime || 'Today' }}</small><strong>{{ task.title }}</strong><em :class="statusClass(task)">{{ statusLabel(task) }}</em></span>
+                <span class="todo-body"><small>{{ formatTaskMeta(task) }}</small><strong>{{ task.title }}</strong><em :class="statusClass(task)">{{ statusLabel(task) }}</em></span>
                 <span class="todo-actions"><i role="button" tabindex="0" @click="toggleTaskCompletion(task, $event)">{{ task.isCompleted ? '↺' : '✓' }}</i><i role="button" tabindex="0" @click="deleteTodoTask(task, $event)">{{ deletingTaskId === String(task.id) ? '...' : '×' }}</i></span>
               </button>
               <div v-if="isTaskLoading" class="empty-task-state">任务同步中...</div>
@@ -1015,7 +1135,16 @@ onUnmounted(() => {
         <form class="glass-modal task-modal" @submit.prevent="createTodoTask">
           <header><div><p>TACTICAL NODE</p><h3>新建任务</h3></div><button type="button" aria-label="关闭弹窗" @click="closeTaskModal">×</button></header>
           <label><span>任务</span><input v-model="taskForm.content" type="text" maxlength="80" placeholder="例如：学习高数"></label>
-          <div class="modal-grid"><label><span>日期</span><input v-model="taskForm.scheduledDate" type="date" pattern="\d{4}-\d{2}-\d{2}"></label><label><span>时间</span><input v-model="taskForm.scheduledTime" type="time"></label></div>
+          <div class="modal-grid"><label><span>日期</span><input v-model="taskForm.scheduledDate" type="date" pattern="\d{4}-\d{2}-\d{2}"></label><label><span>开始时间</span><input v-model="taskForm.scheduledTime" type="time"></label></div>
+          <div class="modal-grid">
+            <label><span>预计时长（分钟）</span><input v-model.number="taskForm.durationMinutes" type="number" min="1" max="1440"></label>
+            <label><span>提前提醒</span><select v-model.number="taskForm.reminderMinutes"><option v-for="minutes in reminderOptions" :key="minutes" :value="minutes">{{ minutes === 0 ? '不提醒' : `提前 ${minutes} 分钟` }}</option></select></label>
+          </div>
+          <div class="modal-grid">
+            <label><span>优先级</span><select v-model="taskForm.priority"><option v-for="priority in priorityOptions" :key="priority" :value="priority">{{ priority }}</option></select></label>
+            <label><span>重复</span><select v-model="taskForm.recurrence"><option v-for="option in recurrenceOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+          </div>
+          <label v-if="taskForm.recurrence !== 'none'"><span>重复次数</span><input v-model.number="taskForm.recurrenceCount" type="number" min="1" max="12"></label>
           <label><span>分类</span><input v-model="taskForm.category" type="text" maxlength="28" placeholder="FocusPort"></label>
           <div class="accent-row" aria-label="任务颜色"><button v-for="accent in accentOptions" :key="accent" type="button" :aria-label="`选择颜色 ${accent}`" :class="{ active: taskForm.accent === accent }" :style="{ backgroundColor: accent }" @click="taskForm.accent = accent" /></div>
           <p v-if="taskError" class="task-error">{{ taskError }}</p>
@@ -1039,7 +1168,7 @@ onUnmounted(() => {
                   @click="selectTask(task)"
                 >
                   <span class="task-accent" :style="{ background: task.accent }" />
-                  <span><strong>{{ task.title }}</strong><small>{{ task.category }} · {{ task.scheduledTime || 'Today' }}</small></span>
+                  <span><strong>{{ task.title }}</strong><small>{{ formatTaskMeta(task) }}</small></span>
                   <em>{{ task.isCompleted ? '已完成' : '可开始' }}</em>
                 </button>
               </div>
@@ -1286,8 +1415,9 @@ button:disabled { cursor: not-allowed; }
 .todo-card:hover,.todo-card.selected { transform: translateY(-1px); border-color: rgba(72,128,255,.55); background: rgba(72,128,255,.12); }
 .todo-card.completed { opacity: .62; }
 .task-accent { min-height: 100%; border-radius: 99px; }
+.todo-body { min-width: 0; }
 .todo-body small,.todo-body strong,.todo-body em { display: block; }
-.todo-body small { color: var(--vision-muted); font-size: 11px; }
+.todo-body small { color: var(--vision-muted); font-size: 11px; line-height: 1.35; }
 .todo-body strong { margin-top: 4px; font-size: 15px; }
 .todo-body em { width: fit-content; margin-top: 7px; border-radius: 99px; padding: 3px 8px; font-size: 10px; font-style: normal; font-weight: 900; }
 .todo-body em.done { background: rgba(0,214,143,.16); color: #62ffc8; }
@@ -1356,7 +1486,7 @@ button:disabled { cursor: not-allowed; }
 .pomodoro-task-option.completed { opacity: .62; }
 .pomodoro-task-option span:not(.task-accent) { display: grid; min-width: 0; gap: 5px; }
 .pomodoro-task-option strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pomodoro-task-option small { color: var(--vision-muted); font-size: 12px; }
+.pomodoro-task-option small { color: var(--vision-muted); font-size: 12px; line-height: 1.35; }
 .pomodoro-task-option em { color: rgba(229,239,255,.68); font-size: 11px; font-style: normal; font-weight: 900; }
 .pomodoro-empty-state { display: grid; justify-items: start; gap: 9px; border: 1px dashed rgba(255,255,255,.16); border-radius: 18px; padding: 18px; color: var(--vision-muted); }
 .pomodoro-empty-state strong { color: white; }

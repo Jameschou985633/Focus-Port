@@ -1075,7 +1075,9 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, ai_score REAL DEFAULT 0, proof_url TEXT DEFAULT '',
                 score_updated_at TIMESTAMP, ai_feedback TEXT DEFAULT '',
                 scheduled_date TEXT DEFAULT '', scheduled_time TEXT DEFAULT '', status TEXT DEFAULT 'todo',
-                category TEXT DEFAULT '', accent TEXT DEFAULT '#4880FF'
+                category TEXT DEFAULT '', accent TEXT DEFAULT '#4880FF',
+                duration_minutes INTEGER DEFAULT 25, priority TEXT DEFAULT '中',
+                reminder_minutes INTEGER DEFAULT 15, recurrence TEXT DEFAULT 'none'
             );
             CREATE TABLE IF NOT EXISTS Phone_Usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, usage_minutes INTEGER NOT NULL,
@@ -1233,6 +1235,10 @@ def init_db() -> None:
         ensure_column(conn, "Todo_Tasks", "status", "TEXT DEFAULT 'todo'")
         ensure_column(conn, "Todo_Tasks", "category", "TEXT DEFAULT ''")
         ensure_column(conn, "Todo_Tasks", "accent", "TEXT DEFAULT '#4880FF'")
+        ensure_column(conn, "Todo_Tasks", "duration_minutes", "INTEGER DEFAULT 25")
+        ensure_column(conn, "Todo_Tasks", "priority", "TEXT DEFAULT '中'")
+        ensure_column(conn, "Todo_Tasks", "reminder_minutes", "INTEGER DEFAULT 15")
+        ensure_column(conn, "Todo_Tasks", "recurrence", "TEXT DEFAULT 'none'")
         if "achievement_code" in table_columns(conn, "Achievements"):
             conn.execute("UPDATE Achievements SET code = achievement_code WHERE (code IS NULL OR code = '')")
         conn.execute("UPDATE Unified_Shop_Items SET dimension = '3D' WHERE dimension IS NULL OR dimension = ''")
@@ -1253,6 +1259,10 @@ def init_db() -> None:
         conn.execute("UPDATE Todo_Tasks SET category = '' WHERE category IS NULL")
         conn.execute("UPDATE Todo_Tasks SET accent = '#4880FF' WHERE accent IS NULL OR accent = ''")
         conn.execute("UPDATE Todo_Tasks SET status = CASE WHEN is_completed = 1 THEN 'done' ELSE 'todo' END WHERE status IS NULL OR status = ''")
+        conn.execute("UPDATE Todo_Tasks SET duration_minutes = 25 WHERE duration_minutes IS NULL OR duration_minutes < 1")
+        conn.execute("UPDATE Todo_Tasks SET priority = '中' WHERE priority IS NULL OR priority = ''")
+        conn.execute("UPDATE Todo_Tasks SET reminder_minutes = 15 WHERE reminder_minutes IS NULL OR reminder_minutes < 0")
+        conn.execute("UPDATE Todo_Tasks SET recurrence = 'none' WHERE recurrence IS NULL OR recurrence = ''")
         ensure_user(conn, "guest")
         ensure_user(conn, ADMIN_TEST_USERNAME, ADMIN_TEST_PASSWORD)
         sync_isometric_items(conn)
@@ -1324,6 +1334,10 @@ class TodoAddRequest(BaseModel):
     status: str = "todo"
     category: str = ""
     accent: str = "#4880FF"
+    duration_minutes: int = 25
+    priority: str = "中"
+    reminder_minutes: int = 15
+    recurrence: str = "none"
 
 
 class TodoActionRequest(BaseModel):
@@ -1333,6 +1347,8 @@ class TodoActionRequest(BaseModel):
 
 TODO_STATUS_VALUES = {"todo", "in_progress", "done"}
 TODO_ACCENT_FALLBACK = "#4880FF"
+TODO_PRIORITY_VALUES = {"低", "中", "高"}
+TODO_RECURRENCE_VALUES = {"none", "daily", "weekly", "monthly"}
 
 
 def normalize_todo_date(value: str = "") -> str:
@@ -1372,6 +1388,16 @@ def normalize_todo_accent(value: str = "") -> str:
     return raw if re.fullmatch(r"#[0-9A-Fa-f]{6}", raw) else TODO_ACCENT_FALLBACK
 
 
+def normalize_todo_priority(value: str = "中") -> str:
+    raw = str(value or "").strip()
+    return raw if raw in TODO_PRIORITY_VALUES else "中"
+
+
+def normalize_todo_recurrence(value: str = "none") -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw in TODO_RECURRENCE_VALUES else "none"
+
+
 def todo_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     completed = bool(row["is_completed"])
     status = normalize_todo_status(row["status"], completed)
@@ -1392,6 +1418,12 @@ def todo_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "status": status,
         "category": row["category"] or "",
         "accent": normalize_todo_accent(row["accent"]),
+        "duration_minutes": int(row["duration_minutes"] or 25),
+        "durationMinutes": int(row["duration_minutes"] or 25),
+        "priority": normalize_todo_priority(row["priority"]),
+        "reminder_minutes": int(row["reminder_minutes"] or 0),
+        "reminderMinutes": int(row["reminder_minutes"] or 0),
+        "recurrence": normalize_todo_recurrence(row["recurrence"]),
     }
 
 
@@ -2652,13 +2684,18 @@ def add_todo(payload: TodoAddRequest) -> dict[str, Any]:
     requested_status = str(payload.status or "todo").strip().lower().replace("-", "_")
     status = "done" if requested_status == "done" else normalize_todo_status(requested_status)
     accent = normalize_todo_accent(payload.accent)
+    duration_minutes = max(1, min(1440, int(payload.duration_minutes or 25)))
+    reminder_minutes = max(0, min(10080, int(payload.reminder_minutes or 0)))
+    priority = normalize_todo_priority(payload.priority)
+    recurrence = normalize_todo_recurrence(payload.recurrence)
     with closing(get_conn()) as conn:
         ensure_user(conn, payload.username)
         cursor = conn.execute(
             """
             INSERT INTO Todo_Tasks
-              (username, content, scheduled_date, scheduled_time, status, category, accent, is_completed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              (username, content, scheduled_date, scheduled_time, status, category, accent, is_completed,
+               duration_minutes, priority, reminder_minutes, recurrence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.username,
@@ -2669,13 +2706,18 @@ def add_todo(payload: TodoAddRequest) -> dict[str, Any]:
                 str(payload.category or "").strip(),
                 accent,
                 1 if status == "done" else 0,
+                duration_minutes,
+                priority,
+                reminder_minutes,
+                recurrence,
             ),
         )
         task_id = cursor.lastrowid
         row = conn.execute(
             """
             SELECT id, content, is_completed, created_at, ai_score, ai_feedback,
-                   scheduled_date, scheduled_time, status, category, accent
+                   scheduled_date, scheduled_time, status, category, accent,
+                   duration_minutes, priority, reminder_minutes, recurrence
             FROM Todo_Tasks WHERE id = ?
             """,
             (task_id,),
@@ -2690,7 +2732,8 @@ def list_todo(username: str) -> dict[str, Any]:
         rows = conn.execute(
             """
             SELECT id, content, is_completed, created_at, ai_score, ai_feedback,
-                   scheduled_date, scheduled_time, status, category, accent
+                   scheduled_date, scheduled_time, status, category, accent,
+                   duration_minutes, priority, reminder_minutes, recurrence
             FROM Todo_Tasks
             WHERE username = ?
             ORDER BY is_completed ASC, COALESCE(NULLIF(scheduled_date, ''), created_at) ASC, id DESC
@@ -2718,7 +2761,8 @@ def toggle_todo(payload: TodoActionRequest) -> dict[str, Any]:
         updated = conn.execute(
             """
             SELECT id, content, is_completed, created_at, ai_score, ai_feedback,
-                   scheduled_date, scheduled_time, status, category, accent
+                   scheduled_date, scheduled_time, status, category, accent,
+                   duration_minutes, priority, reminder_minutes, recurrence
             FROM Todo_Tasks WHERE id = ? AND username = ?
             """,
             (payload.task_id, payload.username),

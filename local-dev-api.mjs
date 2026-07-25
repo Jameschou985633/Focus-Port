@@ -498,6 +498,12 @@ const normalizeTask = (task) => ({
   scheduledTime: task.scheduled_time || '',
   category: task.category || 'FocusPort',
   accent: task.accent || '#4880FF',
+  duration_minutes: Number(task.duration_minutes || 25),
+  durationMinutes: Number(task.duration_minutes || 25),
+  priority: task.priority || '中',
+  reminder_minutes: Number(task.reminder_minutes || 0),
+  reminderMinutes: Number(task.reminder_minutes || 0),
+  recurrence: task.recurrence || 'none',
   created_at: task.created_at,
   createdAt: task.created_at,
   completed_at: task.completed_at || '',
@@ -1094,6 +1100,10 @@ const server = http.createServer(async (req, res) => {
         scheduled_time: body.scheduled_time || '',
         category: body.category || 'FocusPort',
         accent: body.accent || '#4880FF',
+        duration_minutes: Math.max(1, Math.min(1440, Number(body.duration_minutes || 25))),
+        priority: ['低', '中', '高'].includes(body.priority) ? body.priority : '中',
+        reminder_minutes: Math.max(0, Math.min(10080, Number(body.reminder_minutes || 0))),
+        recurrence: ['none', 'daily', 'weekly', 'monthly'].includes(body.recurrence) ? body.recurrence : 'none',
         created_at: new Date().toISOString()
       }
       state.todos[username].unshift(task)

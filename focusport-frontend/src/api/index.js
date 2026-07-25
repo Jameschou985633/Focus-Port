@@ -60,7 +60,11 @@ export const taskApi = {
     scheduled_time: meta.scheduledTime || meta.scheduled_time || '',
     status: meta.status || 'todo',
     category: meta.category || '',
-    accent: meta.accent || '#4880FF'
+    accent: meta.accent || '#4880FF',
+    duration_minutes: meta.durationMinutes || meta.duration_minutes || 25,
+    priority: meta.priority || '中',
+    reminder_minutes: meta.reminderMinutes || meta.reminder_minutes || 0,
+    recurrence: meta.recurrence || 'none'
   }),
   list: (username) => api.get(`/api/todo/${username}`),
   toggle: (taskId, username) => api.post('/api/todo/toggle', { task_id: taskId, username }),
