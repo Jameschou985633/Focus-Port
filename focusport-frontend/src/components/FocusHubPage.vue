@@ -18,7 +18,8 @@ const mailStore = useMailStore()
 const taskStore = useTaskStore()
 const { decomposeGoal } = useGoalDecomposer()
 
-const durationOptions = [15, 25, 40, 60, 90, 120]
+const durationOptions = [15, 30, 45, 60, 90, 120]
+const DURATION_MAGNET_RANGE = 3
 const MIN_FOCUS_MINUTES = 5
 const MAX_FOCUS_MINUTES = 180
 const selectedDuration = ref(25)
@@ -378,7 +379,8 @@ const pomodoroReadyLabel = computed(() => {
 const closestDurationOption = (minutes) => {
   const target = Number(minutes)
   const clamped = Math.max(MIN_FOCUS_MINUTES, Math.min(MAX_FOCUS_MINUTES, Math.round(Number.isFinite(target) ? target : 25)))
-  return { minutes: clamped }
+  const magneticOption = durationOptions.find((option) => Math.abs(option - clamped) <= DURATION_MAGNET_RANGE)
+  return { minutes: magneticOption || clamped }
 }
 
 const applyDurationState = (minutes) => {
