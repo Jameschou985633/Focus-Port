@@ -815,9 +815,9 @@ def award_daily_pomodoro_compute(conn: sqlite3.Connection, username: str) -> dic
 def spend_currency(conn: sqlite3.Connection, username: str, coins: int = 0, diamonds: int = 0, source: str = "") -> None:
     balance = build_growth_payload(conn, username)
     if coins > balance["coins"]:
-        raise HTTPException(status_code=400, detail="金币不足")
+        raise HTTPException(status_code=400, detail=f"CU 不足，需要 {coins} CU，当前 {balance['coins']} CU")
     if diamonds > balance["diamonds"]:
-        raise HTTPException(status_code=400, detail="钻石不足")
+        raise HTTPException(status_code=400, detail=f"专注能量不足，需要 {diamonds}，当前 {balance['diamonds']}")
     if coins and username == ADMIN_TEST_USERNAME:
         conn.execute("UPDATE User_Growth SET coins = ? WHERE username = ?", (ADMIN_TEST_COMPUTE, username))
         conn.execute(

@@ -139,9 +139,9 @@ const filteredItems = computed(() => {
   }
 
   if (sortBy.value === 'price_asc') {
-    result.sort((a, b) => getItemPrice(a).amount - getItemPrice(b).amount)
+    result.sort((a, b) => getItemPriceSortValue(a) - getItemPriceSortValue(b))
   } else if (sortBy.value === 'price_desc') {
-    result.sort((a, b) => getItemPrice(b).amount - getItemPrice(a).amount)
+    result.sort((a, b) => getItemPriceSortValue(b) - getItemPriceSortValue(a))
   } else if (sortBy.value === 'name') {
     result.sort((a, b) => String(a.name_cn || a.name || '').localeCompare(String(b.name_cn || b.name || '')))
   } else {
@@ -189,12 +189,17 @@ const reloadShopState = async () => {
   ])
 }
 
-const getItemPrice = (item) => {
-  if (Number(item.price_coins || 0) > 0) {
-    return { amount: Number(item.price_coins || 0), currency: 'coins', icon: WORLD_NAMES.currency.en, label: WORLD_NAMES.currency.zh }
-  }
-  return { amount: Number(item.price_sunshine || 0), currency: 'diamonds', icon: 'ENERGY', label: '专注能量' }
+const getItemPriceParts = (item) => {
+  const coins = Math.max(0, Number(item.price_coins || 0))
+  const energy = Math.max(0, Number(item.price_sunshine || 0))
+  const parts = []
+  if (coins > 0) parts.push({ amount: coins, currency: 'coins', icon: WORLD_NAMES.currency.en, label: WORLD_NAMES.currency.zh })
+  if (energy > 0) parts.push({ amount: energy, currency: 'diamonds', icon: 'ENERGY', label: '专注能量' })
+  return parts.length ? parts : [{ amount: 0, currency: 'free', icon: 'FREE', label: '免费' }]
 }
+
+const formatItemPrice = (item) => getItemPriceParts(item).map((part) => `${part.amount} ${part.label}`).join(' + ')
+const getItemPriceSortValue = (item) => Math.max(0, Number(item.price_coins || 0)) + Math.max(0, Number(item.price_sunshine || 0))
 
 const isPurchasing = (item) => (
   purchasingId.value !== null &&
@@ -204,8 +209,23 @@ const isPurchasing = (item) => (
 )
 
 const canAfford = (item) => {
-  const price = getItemPrice(item)
-  return price.currency === 'coins' ? userCoins.value >= price.amount : userSunshine.value >= price.amount
+  return getItemPriceParts(item).every((price) => {
+    if (price.currency === 'coins') return userCoins.value >= price.amount
+    if (price.currency === 'diamonds') return userSunshine.value >= price.amount
+    return true
+  })
+}
+
+const getMissingPriceLabels = (item) => getItemPriceParts(item)
+  .filter((price) => (
+    (price.currency === 'coins' && userCoins.value < price.amount) ||
+    (price.currency === 'diamonds' && userSunshine.value < price.amount)
+  ))
+  .map((price) => price.label)
+
+const getInsufficientMessage = (item) => {
+  const missing = getMissingPriceLabels(item)
+  return `${missing.length ? missing.join('、') : '余额'}不足，无法购买 ${item.name_cn || item.name}`
 }
 
 const getPrimaryAction = (item) => {
@@ -260,7 +280,7 @@ const animateToBlueprintVault = (sourceElement, itemName) => {
 const buyItem = async (item, triggerElement = null) => {
   if (purchasingId.value || !item.id) return
   if (!canAfford(item)) {
-    feedbackMessage.value = `${getItemPrice(item).label}不足，无法购买 ${item.name_cn || item.name}`
+    feedbackMessage.value = getInsufficientMessage(item)
     return
   }
   purchasingId.value = item.id
@@ -510,8 +530,10 @@ onMounted(async () => {
 
         <div class="item-footer">
           <div class="price-tag">
-            <span>{{ getItemPrice(item).icon }}</span>
-            <strong>{{ getItemPrice(item).amount }}</strong>
+            <span v-for="price in getItemPriceParts(item)" :key="`${item.id}-${price.currency}`">
+              <b>{{ price.icon }}</b>
+              <strong>{{ price.amount }}</strong>
+            </span>
           </div>
           <button
             type="button"
@@ -553,7 +575,7 @@ onMounted(async () => {
           <div><span>资产维度</span><strong>{{ currentDimension }}</strong></div>
           <div><span>部署类型</span><strong>{{ getItemMetaLine(previewItem) }}</strong></div>
           <div><span>背包可放</span><strong>{{ previewItem.available_to_place_count || 0 }}</strong></div>
-          <div><span>价格</span><strong>{{ getItemPrice(previewItem).amount }} {{ getItemPrice(previewItem).label }}</strong></div>
+          <div><span>价格</span><strong>{{ formatItemPrice(previewItem) }}</strong></div>
         </div>
 
         <div class="preview-actions">
@@ -915,7 +937,18 @@ onMounted(async () => {
 .price-tag {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+.price-tag span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.price-tag b {
+  font-size: 11px;
 }
 
 .primary-btn,

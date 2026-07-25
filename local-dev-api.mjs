@@ -1465,8 +1465,8 @@ const server = http.createServer(async (req, res) => {
         const totalCoins = Number(item.price_coins || 0) * quantity
         const totalDiamonds = Number(item.price_sunshine || 0) * quantity
         const growth = state.growth[username]
-        if (growth.coins < totalCoins) return { status: 400, payload: { detail: '金币不足' } }
-        if (growth.diamonds < totalDiamonds) return { status: 400, payload: { detail: '钻石不足' } }
+        if (growth.coins < totalCoins) return { status: 400, payload: { detail: `CU 不足，需要 ${totalCoins} CU，当前 ${growth.coins} CU` } }
+        if (growth.diamonds < totalDiamonds) return { status: 400, payload: { detail: `专注能量不足，需要 ${totalDiamonds}，当前 ${growth.diamonds}` } }
         if (username === ADMIN_TEST_USERNAME) growth.coins = ADMIN_TEST_COMPUTE
         else growth.coins -= totalCoins
         growth.diamonds -= totalDiamonds
