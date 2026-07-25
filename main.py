@@ -3812,8 +3812,9 @@ def _award_arcade_winner_once(room: dict[str, Any], source: str) -> None:
     winner_username = _arcade_winner_username(room)
     if not winner_username:
         return
-    with db() as conn:
+    with closing(get_conn()) as conn:
         add_currency(conn, winner_username, coins=ARCADE_WINNER_COMPUTE_REWARD, source=source)
+        conn.commit()
     room["winner_rewarded"] = True
 
 
@@ -3853,8 +3854,9 @@ def arcade_play(payload: ArcadePlayPayload) -> dict[str, Any]:
     game_type = _normalize_arcade_game(payload.game)
     is_online_room = str(payload.game).endswith("_online")
     if is_online_room:
-        with db() as conn:
+        with closing(get_conn()) as conn:
             spend_currency(conn, payload.username, coins=ARCADE_ROOM_CREATE_COST, source=f"arcade_room_create:{game_type}")
+            conn.commit()
     code = _generate_room_code()
     _arcade_rooms[code] = {
         "room_code": code,
@@ -4067,8 +4069,9 @@ async def arcade_ws(websocket: WebSocket, room_code: str) -> None:
 
 @app.post("/api/gomoku/create")
 def gomoku_create(payload: GomokuCreatePayload) -> dict[str, Any]:
-    with db() as conn:
+    with closing(get_conn()) as conn:
         spend_currency(conn, payload.username, coins=ARCADE_ROOM_CREATE_COST, source="arcade_room_create:gomoku")
+        conn.commit()
     game_id = _generate_room_code(8)
     _gomoku_games[game_id] = {
         "game_id": game_id,
@@ -4158,8 +4161,9 @@ async def gomoku_ws(websocket: WebSocket, game_id: str) -> None:
                 if game.get("winner") and not game.get("winner_rewarded"):
                     winner_username = game.get("player_black") if int(game.get("winner") or 0) == 1 else game.get("player_white")
                     if winner_username:
-                        with db() as conn:
+                        with closing(get_conn()) as conn:
                             add_currency(conn, winner_username, coins=ARCADE_WINNER_COMPUTE_REWARD, source="arcade_win:gomoku")
+                            conn.commit()
                         game["winner_rewarded"] = True
                 for ws_conn in list(_gomoku_ws_connections.get(game_id, set())):
                     try:
