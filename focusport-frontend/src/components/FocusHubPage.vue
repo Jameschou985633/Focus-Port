@@ -35,6 +35,7 @@ const activeFocusTodoId = ref('')
 const selectedDateKey = ref('')
 const monthCursor = ref(new Date())
 const taskModalOpen = ref(false)
+const pomodoroModalOpen = ref(false)
 const calendarModalOpen = ref(false)
 const computeLedgerOpen = ref(false)
 const computeLedgerHistory = ref([])
@@ -296,6 +297,11 @@ const focusActionTitle = computed(() => selectedTodoTask.value?.title || '请选
 const showFocusGoal = computed(() => Boolean(focusGoalTitle.value && focusGoalTitle.value !== focusActionTitle.value))
 const durationProgress = computed(() => `${(selectedDurationIndex.value / Math.max(1, durationOptions.length - 1)) * 100}%`)
 const durationTickPosition = (index) => `${(index / Math.max(1, durationOptions.length - 1)) * 100}%`
+const pomodoroReadyLabel = computed(() => {
+  if (selectedTaskIsDone.value) return '该任务已完成，请选择其他日程'
+  if (selectedTodoTask.value) return `${selectedTodoTask.value.title} · ${selectedDuration.value} 分钟`
+  return '请选择日程后开始'
+})
 
 const closestDurationOption = (minutes) => {
   const target = Number(minutes)
@@ -635,6 +641,15 @@ const selectTask = (task) => {
   syncSelectedTaskDuration()
 }
 
+const openPomodoroModal = () => {
+  if (!selectedTodoTask.value) selectFallbackTask()
+  pomodoroModalOpen.value = true
+}
+
+const closePomodoroModal = () => {
+  pomodoroModalOpen.value = false
+}
+
 const handleDurationSelect = (minutes) => {
   if (focusHubStore.pomodoro.isRunning || isStartingFocus.value) return
   const normalizedMinutes = applyDurationState(minutes)
@@ -662,6 +677,12 @@ const handleToggleFocus = () => {
     return
   }
   handleStartFocus()
+}
+
+const handleStartFocusFromModal = async () => {
+  if (focusActionDisabled.value) return
+  await handleStartFocus()
+  closePomodoroModal()
 }
 
 const handleAbortFocus = () => {
@@ -836,7 +857,7 @@ const submitAuditReport = async () => {
   }
 }
 
-const anyModalOpen = computed(() => taskModalOpen.value || calendarModalOpen.value || computeLedgerOpen.value || auditModalOpen.value)
+const anyModalOpen = computed(() => taskModalOpen.value || pomodoroModalOpen.value || calendarModalOpen.value || computeLedgerOpen.value || auditModalOpen.value)
 
 onMounted(async () => {
   try {
@@ -933,12 +954,12 @@ onUnmounted(() => {
             <div class="card-heading"><span>番茄钟</span><strong>{{ selectedDuration }} min</strong></div>
             <div class="timer-layout">
               <div class="timer-ring-xl"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" :r="ringRadius" /><circle cx="60" cy="60" :r="ringRadius" :stroke-dasharray="ringCircumference" :stroke-dashoffset="ringOffset" /></svg><span>{{ progressPercent }}%</span></div>
-              <div class="timer-copy"><strong>{{ formattedRemaining }}</strong><small>{{ selectedTaskIsDone ? '已完成任务不可再次启动' : focusActionTitle }}</small><button type="button" :disabled="focusActionDisabled" :title="selectedTaskIsDone ? '已完成任务不能再启动番茄钟' : focusActionLabel" @click="handleToggleFocus">{{ focusActionLabel }}</button></div>
-            </div>
-            <div class="duration-slider" :class="{ locked: focusHubStore.pomodoro.isRunning || isStartingFocus }" :style="{ '--duration-progress': durationProgress }">
-              <div class="duration-track" aria-hidden="true" />
-              <input v-model.number="selectedDurationIndex" type="range" min="0" :max="durationOptions.length - 1" step="1" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" aria-label="Pomodoro duration" @input="handleDurationDrag" @change="handleDurationDrag">
-              <div class="duration-ticks"><button v-for="(m, index) in durationOptions" :key="m" type="button" :class="{ active: selectedDurationIndex === index }" :style="{ '--tick-position': durationTickPosition(index) }" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" :aria-label="`选择 ${m} 分钟`" @click="handleDurationSelect(m)"><span /><b>{{ m }}</b></button></div>
+              <div class="timer-copy">
+                <strong>{{ formattedRemaining }}</strong>
+                <small>{{ pomodoroReadyLabel }}</small>
+                <button v-if="focusHubStore.pomodoro.isRunning" type="button" @click="handleToggleFocus">暂停专注</button>
+                <button v-else type="button" @click="openPomodoroModal">配置番茄钟</button>
+              </div>
             </div>
           </article>
 
@@ -1000,6 +1021,52 @@ onUnmounted(() => {
           <p v-if="taskError" class="task-error">{{ taskError }}</p>
           <footer><button type="button" class="ghost" @click="closeTaskModal">取消</button><button type="submit" :disabled="isTaskSubmitting">{{ isTaskSubmitting ? '创建中' : '创建任务' }}</button></footer>
         </form>
+      </div>
+
+      <div v-if="pomodoroModalOpen" class="glass-modal-overlay pomodoro-modal-overlay" @click.self="closePomodoroModal">
+        <section class="glass-modal pomodoro-modal">
+          <header><div><p>POMODORO SETUP</p><h3>配置番茄钟</h3></div><button type="button" aria-label="关闭番茄钟设置" @click="closePomodoroModal">×</button></header>
+          <div class="pomodoro-setup-grid">
+            <section class="pomodoro-task-picker">
+              <div class="setup-heading"><span>选择日程</span><strong>{{ selectedDateKey }}</strong></div>
+              <div v-if="visibleTasks.length" class="pomodoro-task-list">
+                <button
+                  v-for="task in visibleTasks"
+                  :key="task.id"
+                  type="button"
+                  class="pomodoro-task-option"
+                  :class="{ active: String(task.id) === String(selectedTodoTaskId), completed: task.isCompleted }"
+                  @click="selectTask(task)"
+                >
+                  <span class="task-accent" :style="{ background: task.accent }" />
+                  <span><strong>{{ task.title }}</strong><small>{{ task.category }} · {{ task.scheduledTime || 'Today' }}</small></span>
+                  <em>{{ task.isCompleted ? '已完成' : '可开始' }}</em>
+                </button>
+              </div>
+              <div v-else class="pomodoro-empty-state">
+                <strong>今天还没有日程</strong>
+                <span>先创建一个任务，番茄钟会绑定到选中的日程。</span>
+                <button type="button" @click="openTaskModal(selectedDateKey)">新建日程</button>
+              </div>
+            </section>
+            <section class="pomodoro-duration-panel">
+              <div class="setup-heading"><span>专注时长</span><strong>{{ selectedDuration }} min</strong></div>
+              <div class="duration-slider" :class="{ locked: focusHubStore.pomodoro.isRunning || isStartingFocus }" :style="{ '--duration-progress': durationProgress }">
+                <div class="duration-track" aria-hidden="true" />
+                <input v-model.number="selectedDurationIndex" type="range" min="0" :max="durationOptions.length - 1" step="1" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" aria-label="Pomodoro duration" @input="handleDurationDrag" @change="handleDurationDrag">
+                <div class="duration-ticks"><button v-for="(m, index) in durationOptions" :key="m" type="button" :class="{ active: selectedDurationIndex === index }" :style="{ '--tick-position': durationTickPosition(index) }" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" :aria-label="`选择 ${m} 分钟`" @click="handleDurationSelect(m)"><span /><b>{{ m }}</b></button></div>
+              </div>
+              <div class="pomodoro-summary">
+                <span>当前配置</span>
+                <strong>{{ pomodoroReadyLabel }}</strong>
+              </div>
+            </section>
+          </div>
+          <footer>
+            <button type="button" class="ghost" @click="closePomodoroModal">取消</button>
+            <button type="button" :disabled="focusActionDisabled" @click="handleStartFocusFromModal">{{ focusActionLabel }}</button>
+          </footer>
+        </section>
       </div>
 
       <div v-if="calendarModalOpen" class="glass-modal-overlay calendar-modal-overlay" @click.self="calendarModalOpen = false">
@@ -1258,6 +1325,7 @@ button:disabled { cursor: not-allowed; }
 .compute-ledger-overlay { z-index: 170; }
 .audit-modal-overlay { z-index: 180; }
 .task-modal-overlay { z-index: 190; }
+.pomodoro-modal-overlay { z-index: 185; }
 .glass-modal { width: min(760px,100%); max-height: min(86vh,900px); overflow-y: auto; border-radius: 28px; padding: 24px; }
 .glass-modal header { margin-bottom: 20px; }
 .glass-modal header h3 { margin: 4px 0 0; font-size: 25px; }
@@ -1273,6 +1341,26 @@ button:disabled { cursor: not-allowed; }
 .glass-modal footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .glass-modal footer button { padding: 11px 16px; }
 .glass-modal footer .ghost { background: rgba(255,255,255,.09); }
+.pomodoro-modal { width: min(920px,100%); }
+.pomodoro-setup-grid { display: grid; grid-template-columns: minmax(280px,.9fr) minmax(280px,1fr); gap: 18px; }
+.pomodoro-task-picker,.pomodoro-duration-panel { display: grid; align-content: start; gap: 14px; border: 1px solid rgba(255,255,255,.1); border-radius: 22px; padding: 16px; background: rgba(255,255,255,.045); }
+.setup-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.setup-heading span,.pomodoro-summary span { color: rgba(229,239,255,.68); font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.setup-heading strong { color: #fff; font-size: 14px; }
+.pomodoro-task-list { display: grid; gap: 10px; max-height: min(42vh,360px); overflow-y: auto; padding-right: 4px; }
+.pomodoro-task-option { display: grid; grid-template-columns: 5px minmax(0,1fr) auto; align-items: center; gap: 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 12px; background: rgba(255,255,255,.055); color: white; text-align: left; }
+.pomodoro-task-option:hover { background: rgba(72,128,255,.12); border-color: rgba(72,128,255,.44); }
+.pomodoro-task-option.active { background: rgba(72,128,255,.2); border-color: rgba(72,128,255,.7); }
+.pomodoro-task-option.completed { opacity: .62; }
+.pomodoro-task-option span:not(.task-accent) { display: grid; min-width: 0; gap: 5px; }
+.pomodoro-task-option strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pomodoro-task-option small { color: var(--vision-muted); font-size: 12px; }
+.pomodoro-task-option em { color: rgba(229,239,255,.68); font-size: 11px; font-style: normal; font-weight: 900; }
+.pomodoro-empty-state { display: grid; justify-items: start; gap: 9px; border: 1px dashed rgba(255,255,255,.16); border-radius: 18px; padding: 18px; color: var(--vision-muted); }
+.pomodoro-empty-state strong { color: white; }
+.pomodoro-empty-state button { border: 0; border-radius: 13px; padding: 10px 14px; background: var(--vision-blue); color: white; font-weight: 900; }
+.pomodoro-summary { display: grid; gap: 7px; margin-top: 10px; border-radius: 18px; padding: 14px; background: rgba(0,117,255,.12); }
+.pomodoro-summary strong { color: #fff; font-size: 17px; line-height: 1.35; }
 .calendar-modal { width: min(1120px,100%); }
 .calendar-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .calendar-toolbar button { padding: 10px 13px; }
@@ -1362,6 +1450,7 @@ button:disabled { cursor: not-allowed; }
   .vision-main { height: auto; min-height: 0; margin-left: 0; overflow: visible; padding: 18px 14px 32px; }
   .workbench-grid { min-height: 0; }
   .task-list-scroll { min-height: 260px; max-height: 48vh; }
+  .pomodoro-setup-grid { grid-template-columns: 1fr; }
   .stage-row { grid-template-columns: 1fr; }
   .audit-layout,.modal-grid,.ledger-summary-grid { grid-template-columns: 1fr; }
   .calendar-cell { min-height: 82px; padding: 7px; }
