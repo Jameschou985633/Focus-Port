@@ -1081,7 +1081,7 @@ def init_db() -> None:
             );
             CREATE TABLE IF NOT EXISTS Todo_Tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, content TEXT, is_completed BOOLEAN DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, ai_score REAL DEFAULT 0, proof_url TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, completed_at TIMESTAMP, ai_score REAL DEFAULT 0, proof_url TEXT DEFAULT '',
                 score_updated_at TIMESTAMP, ai_feedback TEXT DEFAULT '',
                 scheduled_date TEXT DEFAULT '', scheduled_time TEXT DEFAULT '', status TEXT DEFAULT 'todo',
                 category TEXT DEFAULT '', accent TEXT DEFAULT '#4880FF',
@@ -1248,6 +1248,7 @@ def init_db() -> None:
         ensure_column(conn, "Todo_Tasks", "priority", "TEXT DEFAULT '中'")
         ensure_column(conn, "Todo_Tasks", "reminder_minutes", "INTEGER DEFAULT 15")
         ensure_column(conn, "Todo_Tasks", "recurrence", "TEXT DEFAULT 'none'")
+        ensure_column(conn, "Todo_Tasks", "completed_at", "TIMESTAMP")
         if "achievement_code" in table_columns(conn, "Achievements"):
             conn.execute("UPDATE Achievements SET code = achievement_code WHERE (code IS NULL OR code = '')")
         conn.execute("UPDATE Unified_Shop_Items SET dimension = '3D' WHERE dimension IS NULL OR dimension = ''")
@@ -1272,6 +1273,7 @@ def init_db() -> None:
         conn.execute("UPDATE Todo_Tasks SET priority = '中' WHERE priority IS NULL OR priority = ''")
         conn.execute("UPDATE Todo_Tasks SET reminder_minutes = 15 WHERE reminder_minutes IS NULL OR reminder_minutes < 0")
         conn.execute("UPDATE Todo_Tasks SET recurrence = 'none' WHERE recurrence IS NULL OR recurrence = ''")
+        conn.execute("UPDATE Todo_Tasks SET completed_at = created_at WHERE is_completed = 1 AND completed_at IS NULL")
         ensure_user(conn, "guest")
         ensure_user(conn, ADMIN_TEST_USERNAME, ADMIN_TEST_PASSWORD)
         sync_isometric_items(conn)
@@ -2240,19 +2242,61 @@ def refresh_user_achievements(conn: sqlite3.Connection, username: str) -> list[d
 
 def generate_ai_reply(conn: sqlite3.Connection, username: str, message: str) -> str:
     growth = build_growth_payload(conn, username)
-    pending_tasks = conn.execute("SELECT content FROM Todo_Tasks WHERE username = ? AND is_completed = 0 ORDER BY id DESC LIMIT 5", (username,)).fetchall()
+    try:
+        pending_tasks = conn.execute("SELECT content FROM Todo_Tasks WHERE username = ? AND is_completed = 0 ORDER BY id DESC LIMIT 5", (username,)).fetchall()
+    except sqlite3.Error:
+        pending_tasks = []
     tasks = [row["content"] for row in pending_tasks]
-    completed_week = conn.execute(
-        "SELECT COUNT(*) AS count FROM Todo_Tasks WHERE username = ? AND is_completed = 1 AND COALESCE(completed_at, created_at) >= datetime('now', '-7 day')",
-        (username,),
-    ).fetchone()["count"]
-    focus_week = conn.execute(
-        "SELECT COALESCE(SUM(duration_minutes), 0) AS minutes FROM Focus_Sessions WHERE username = ? AND status = 'completed' AND created_at >= datetime('now', '-7 day')",
-        (username,),
-    ).fetchone()["minutes"]
+    try:
+        completed_week = conn.execute(
+            "SELECT COUNT(*) AS count FROM Todo_Tasks WHERE username = ? AND is_completed = 1 AND COALESCE(completed_at, created_at) >= datetime('now', '-7 day')",
+            (username,),
+        ).fetchone()["count"]
+    except sqlite3.Error:
+        completed_week = 0
+    try:
+        focus_week = conn.execute(
+            "SELECT COALESCE(SUM(duration_minutes), 0) AS minutes FROM Focus_Sessions WHERE username = ? AND status = 'completed' AND created_at >= datetime('now', '-7 day')",
+            (username,),
+        ).fetchone()["minutes"]
+    except sqlite3.Error:
+        focus_week = 0
     lowered = message.lower()
     task_lines = "\n".join([f"{index + 1}. {task}" for index, task in enumerate(tasks)]) or "目前没有待办。先新建 1 个最重要任务，再开始专注会更稳。"
     snapshot = f"我先看了一眼你的状态：本周专注约 {round((focus_week or 0) / 60, 1)} 小时，已完成 {completed_week or 0} 个任务，当前还有 {len(tasks)} 个重点待办，算力余额 {growth['coins']} CU。"
+
+    api_key = get_env_value("QWEN_API_KEY", "DASHSCOPE_API_KEY")
+    if api_key:
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=api_key, base_url=QWEN_BASE_URL)
+            response = client.chat.completions.create(
+                model=get_env_value("QWEN_CHAT_MODEL", "VITE_QWEN_MODEL") or DEFAULT_QWEN_MODEL,
+                temperature=0.7,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是 FocusPort 的 AI 副官，回答要具体、简洁、可执行。"
+                            "结合用户任务、专注、算力状态给建议，不要编造不存在的数据。"
+                            "如果用户只是打招呼，也要自然回应并引导下一步。"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"用户：{username}\n{snapshot}\n待办：\n{task_lines}\n\n"
+                            f"用户消息：{message.strip()}"
+                        ),
+                    },
+                ],
+            )
+            model_reply = (response.choices[0].message.content or "").strip()
+            if model_reply:
+                return model_reply[:1600]
+        except Exception:
+            pass
 
     if any(key in message for key in ["你是谁", "哪个AI", "哪个ai", "什么AI", "什么ai"]) or "who are you" in lowered:
         return "我是 FocusPort 的 AI 副官，负责把你的任务、专注数据、算力记录和最近状态整合起来，给出学习计划、复盘建议和执行清单。"
@@ -2891,8 +2935,8 @@ def toggle_todo(payload: TodoActionRequest) -> dict[str, Any]:
 
         next_completed = 0 if int(row["is_completed"] or 0) == 1 else 1
         conn.execute(
-            "UPDATE Todo_Tasks SET is_completed = ?, status = ? WHERE id = ? AND username = ?",
-            (next_completed, "done" if next_completed else "todo", payload.task_id, payload.username),
+            "UPDATE Todo_Tasks SET is_completed = ?, status = ?, completed_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END WHERE id = ? AND username = ?",
+            (next_completed, "done" if next_completed else "todo", next_completed, payload.task_id, payload.username),
         )
         updated = conn.execute(
             """
