@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
-import { computeLedgerApi, focusApi, growthApi, phoneApi, taskApi } from '../api'
+import { computeLedgerApi, focusApi, phoneApi, taskApi } from '../api'
 import { useUserStore } from '../stores/user'
 import { useFocusHubStore } from '../stores/focusHub'
 import { useDimensionStore } from '../stores/dimension'
@@ -58,7 +58,7 @@ const auditSelectedFile = ref(null)
 const auditPreview = ref('')
 const auditResult = ref(null)
 const auditMinutes = ref(0)
-const auditCategory = ref('学习')
+const auditCategory = ref('娱乐')
 const auditNotes = ref('')
 const auditState = ref('idle')
 const auditMessage = ref('')
@@ -85,7 +85,7 @@ const recurrenceOptions = [
   { value: 'weekly', label: '每周' },
   { value: 'monthly', label: '每月' }
 ]
-const auditCategories = ['学习', '工作', '社交', '娱乐', '游戏', '其他']
+const auditCategories = ['娱乐', '游戏', '社交', '视频', '学习', '工作', '其他']
 const dateKeyPattern = /^\d{4}-\d{2}-\d{2}$/
 const weekdayLabels = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const priorityRank = { '高': 0, '中': 1, '低': 2 }
@@ -918,7 +918,7 @@ const resetAuditFlow = () => {
   auditPreview.value = ''
   auditResult.value = null
   auditMinutes.value = 0
-  auditCategory.value = '学习'
+  auditCategory.value = '娱乐'
   auditNotes.value = ''
   auditState.value = 'idle'
   auditMessage.value = ''
@@ -944,8 +944,8 @@ const analyzeAuditScreenshot = async () => {
     const response = await phoneApi.analyzeScreenshot(auditSelectedFile.value, username.value)
     const result = response.data || {}
     auditResult.value = result
-    auditMinutes.value = Math.max(0, Number(result.total_minutes || 0))
-    auditCategory.value = String(result.top_category || auditCategory.value || '学习')
+    auditMinutes.value = Math.max(0, Number(result.entertainment_minutes ?? result.total_minutes ?? 0))
+    auditCategory.value = String(result.top_category || auditCategory.value || '娱乐')
     auditState.value = 'audit'
   } catch (error) {
     console.error('phone screenshot analysis failed', error)
@@ -956,17 +956,17 @@ const analyzeAuditScreenshot = async () => {
 
 const submitAuditReport = async () => {
   const minutes = Math.max(0, Number(auditMinutes.value || 0))
-  if (!minutes) {
-    auditMessage.value = '请输入有效的手机使用分钟数。'
+  if (minutes > 1440) {
+    auditMessage.value = '分钟数不能超过 1440。'
     return
   }
   auditState.value = 'submitting'
   auditMessage.value = ''
   try {
-    await phoneApi.report(username.value, minutes, auditCategory.value, auditNotes.value)
-    await growthApi.updateDiscipline(username.value, minutes)
+    const response = await phoneApi.report(username.value, minutes, auditCategory.value, auditNotes.value)
     await userStore.loadGrowth()
-    auditMessage.value = 'Audit confirmed. 自律指数已刷新。'
+    const reward = Math.max(0, Number(response.data?.reward_coins || 0))
+    auditMessage.value = reward > 0 ? `Audit confirmed. 获得 ${reward} CU，自律指数已刷新。` : 'Audit confirmed. 今日奖励已结算，自律指数已刷新。'
     auditState.value = 'done'
     window.setTimeout(() => {
       closeAuditModal()
@@ -1271,10 +1271,10 @@ onUnmounted(() => {
           <div class="audit-layout">
             <label class="audit-upload" :class="{ ready: auditPreview }"><input type="file" accept="image/*" @change="handleAuditFileSelect"><img v-if="auditPreview" :src="auditPreview" alt="手机截图预览"><span v-else><b>上传终端截图</b><small>支持 iOS / Android 屏幕使用时间截图</small></span></label>
             <div class="audit-panel">
-              <p class="audit-copy">AI scan detected: <strong>{{ auditMinutes || 0 }} mins</strong>. Awaiting Commander validation.</p>
+              <p class="audit-copy">AI scan detected: <strong>{{ auditMinutes || 0 }} entertainment mins</strong>. Awaiting Commander validation.</p>
               <button type="button" class="audit-scan" :disabled="!auditSelectedFile || auditState === 'analyzing'" @click="analyzeAuditScreenshot">{{ auditState === 'analyzing' ? '扫描中...' : 'AI 扫描截图' }}</button>
               <div v-if="auditResult" class="audit-result"><span>主要分类：{{ auditResult.top_category || auditCategory }}</span><small>{{ auditResult.summary || '请校正后确认提交。' }}</small></div>
-              <label><span>校正分钟数</span><input v-model.number="auditMinutes" type="number" min="0" max="1440" placeholder="分钟"></label>
+              <label><span>娱乐使用分钟数</span><input v-model.number="auditMinutes" type="number" min="0" max="1440" placeholder="分钟"></label>
               <label><span>分类</span><select v-model="auditCategory"><option v-for="item in auditCategories" :key="item" :value="item">{{ item }}</option></select></label>
               <label><span>备注</span><textarea v-model="auditNotes" rows="3" placeholder="可选，记录今天的干扰源" /></label>
             </div>

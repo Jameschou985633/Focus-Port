@@ -12,6 +12,14 @@ const ADMIN_UPLOAD_ALLOWED_SUFFIXES = new Set(['.pdf', '.doc', '.docx', '.mp3', 
 const DAILY_POMODORO_COMPUTE_REWARD = 200
 const ARCADE_ROOM_CREATE_COST = 25
 const ARCADE_WINNER_COMPUTE_REWARD = 10
+const PHONE_USAGE_REWARD_SOURCE = 'phone_usage_audit'
+const PHONE_USAGE_REWARD_TIERS = [
+  [30, 160],
+  [60, 120],
+  [120, 80],
+  [180, 45],
+  [240, 20]
+]
 const ADMIN_TEST_USERNAME = 'admin_test'
 const ADMIN_TEST_PASSWORD = 'FocusPortAdmin888'
 const ADMIN_TEST_COMPUTE = 999999999
@@ -82,7 +90,7 @@ const defaultGrowth = () => ({
 
 const loadState = async () => {
   if (!existsSync(STATE_FILE)) {
-    return { users: {}, growth: {}, todos: {}, focusSessions: {}, aiChats: {}, messages: {}, friends: [], arcadeRooms: {}, computeLedger: {}, inventory: {}, placed: {}, nextTaskId: 1, nextAiChatId: 1, nextMessageId: 1, nextFriendshipId: 1, nextInventoryId: 1, nextPlacedId: 1 }
+    return { users: {}, growth: {}, todos: {}, focusSessions: {}, phoneUsage: {}, aiChats: {}, messages: {}, friends: [], arcadeRooms: {}, computeLedger: {}, inventory: {}, placed: {}, nextTaskId: 1, nextAiChatId: 1, nextMessageId: 1, nextFriendshipId: 1, nextInventoryId: 1, nextPlacedId: 1 }
   }
   try {
     const loaded = JSON.parse(await readFile(STATE_FILE, 'utf8'))
@@ -91,6 +99,7 @@ const loadState = async () => {
       growth: loaded.growth || {},
       todos: loaded.todos || {},
       focusSessions: loaded.focusSessions || {},
+      phoneUsage: loaded.phoneUsage || {},
       aiChats: loaded.aiChats || {},
       messages: loaded.messages || {},
       friends: Array.isArray(loaded.friends) ? loaded.friends : [],
@@ -106,7 +115,7 @@ const loadState = async () => {
       nextPlacedId: loaded.nextPlacedId || 1
     }
   } catch {
-    return { users: {}, growth: {}, todos: {}, focusSessions: {}, aiChats: {}, messages: {}, friends: [], arcadeRooms: {}, computeLedger: {}, inventory: {}, placed: {}, nextTaskId: 1, nextAiChatId: 1, nextMessageId: 1, nextFriendshipId: 1, nextInventoryId: 1, nextPlacedId: 1 }
+    return { users: {}, growth: {}, todos: {}, focusSessions: {}, phoneUsage: {}, aiChats: {}, messages: {}, friends: [], arcadeRooms: {}, computeLedger: {}, inventory: {}, placed: {}, nextTaskId: 1, nextAiChatId: 1, nextMessageId: 1, nextFriendshipId: 1, nextInventoryId: 1, nextPlacedId: 1 }
   }
 }
 
@@ -189,6 +198,8 @@ const ensureUser = (username, password = 'dev') => {
   if (!state.todos[name]) state.todos[name] = []
   if (!state.focusSessions) state.focusSessions = {}
   if (!state.focusSessions[name]) state.focusSessions[name] = []
+  if (!state.phoneUsage) state.phoneUsage = {}
+  if (!state.phoneUsage[name]) state.phoneUsage[name] = []
   if (!state.aiChats[name]) state.aiChats[name] = []
   if (!state.messages[name]) state.messages[name] = []
   if (!state.inventory[name]) state.inventory[name] = []
@@ -209,6 +220,18 @@ const recordComputeLedger = (username, amount, source = 'system', description = 
     description: description || (Number(amount) >= 0 ? `Compute gain from ${source}` : `Compute spend for ${source}`),
     created_at: new Date().toISOString()
   })
+}
+
+const disciplineScoreFromPhoneMinutes = (currentScore, phoneMinutes) => {
+  const penalty = Math.min(Math.max(Number(phoneMinutes || 0), 0) / 6, 45)
+  const score = Math.max(0, Math.min(100, 100 - penalty))
+  return Math.round((((Number(currentScore || 0) > 0 ? Number(currentScore || 0) : score) * 0.5) + (score * 0.5)) * 10) / 10
+}
+
+const phoneUsageRewardForMinutes = (minutes) => {
+  const normalized = Math.max(0, Math.min(1440, Number(minutes || 0)))
+  const tier = PHONE_USAGE_REWARD_TIERS.find(([limit]) => normalized <= limit)
+  return tier ? tier[1] : 0
 }
 
 const gradeExam = (exam, answers = {}) => {
@@ -1045,6 +1068,61 @@ const server = http.createServer(async (req, res) => {
       ensureUser(username)
       await saveState()
       return send(res, 200, { success: true, growth: state.growth[username] })
+    }
+
+    if (req.method === 'POST' && path === '/api/growth/update-discipline') {
+      const body = await readBody(req)
+      const username = String(body.username || '').trim()
+      const minutes = Math.max(0, Math.min(1440, Number(body.phone_minutes || 0)))
+      ensureUser(username)
+      state.growth[username].discipline_score = disciplineScoreFromPhoneMinutes(state.growth[username].discipline_score, minutes)
+      await saveState()
+      return send(res, 200, { success: true, growth: state.growth[username], discipline_score: state.growth[username].discipline_score })
+    }
+
+    if (req.method === 'POST' && path === '/api/phone-usage/analyze-screenshot') {
+      await readBody(req)
+      return send(res, 200, {
+        success: true,
+        source: 'manual',
+        total_minutes: 0,
+        entertainment_minutes: 0,
+        top_category: '娱乐',
+        apps: [{ name: '本地开发模式请手动校正', minutes: 0, category: '娱乐' }],
+        summary: '本地开发 API 未配置视觉识别，请手动输入娱乐使用分钟数。'
+      })
+    }
+
+    if (req.method === 'POST' && path === '/api/phone-usage/report') {
+      const body = await readBody(req)
+      const username = String(body.username || '').trim()
+      const usageMinutes = Math.max(0, Math.min(1440, Number(body.usage_minutes || 0)))
+      const category = String(body.category || '娱乐').trim() || '娱乐'
+      const notes = String(body.notes || '').trim()
+      const todayKey = toDateKey()
+      const rewardTarget = phoneUsageRewardForMinutes(usageMinutes)
+      ensureUser(username)
+      state.phoneUsage[username].push({ usage_minutes: usageMinutes, category, notes, report_date: todayKey, created_at: new Date().toISOString() })
+      const previousReward = Math.max(0, Number(state.growth[username].daily_phone_usage_reward_amount || 0))
+      const alreadyDate = state.growth[username].daily_phone_usage_reward_date === todayKey
+      const rewardDelta = Math.max(0, rewardTarget - (alreadyDate ? previousReward : 0))
+      if (rewardDelta > 0) {
+        state.growth[username].coins += rewardDelta
+        recordComputeLedger(username, rewardDelta, PHONE_USAGE_REWARD_SOURCE, `手机娱乐时长 ${usageMinutes} 分钟奖励`)
+      }
+      state.growth[username].daily_phone_usage_reward_date = todayKey
+      state.growth[username].daily_phone_usage_reward_amount = Math.max(alreadyDate ? previousReward : 0, rewardTarget)
+      state.growth[username].discipline_score = disciplineScoreFromPhoneMinutes(state.growth[username].discipline_score, usageMinutes)
+      await saveState()
+      return send(res, 200, {
+        success: true,
+        message: `终端使用记录已保存，获得 ${rewardDelta} CU`,
+        usage_minutes: usageMinutes,
+        reward_coins: rewardDelta,
+        reward_target: rewardTarget,
+        discipline_score: state.growth[username].discipline_score,
+        growth: state.growth[username]
+      })
     }
 
     const avatarMatch = path.match(/^\/api\/user\/([^/]+)\/avatar$/)
