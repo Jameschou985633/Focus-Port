@@ -784,16 +784,9 @@ const projectReply = (profile) => ([
 const generalReply = (profile, message) => {
   const recentContext = profile.recentChat ? `\n\n我还参考了最近对话：\n${profile.recentChat}` : ''
   return [
-    aiSnapshotLine(profile),
-    '',
+    '这类开放问题需要真正的大模型回答，但当前本地开发 API 没有接入 Qwen/DashScope。',
+    '线上请在 Render 的 Environment 里配置 `QWEN_API_KEY` 或 `DASHSCOPE_API_KEY`，然后重新部署。',
     `你刚才问的是：“${cleanAiText(message)}”。`,
-    '这个问题我可以继续拆，但你需要给我一个更具体的目标：你是想了解功能入口、修复报错、规划今天任务，还是分析学习状态？',
-    '',
-    '你可以直接这样问：',
-    '1. “我今天有三件事，帮我排优先级。”',
-    '2. “FocusPort 的 CU 怎么获得和使用？”',
-    '3. “为什么我的截图识别没有奖励？”',
-    '4. “分析我的薄弱点。”',
     recentContext
   ].join('\n')
 }

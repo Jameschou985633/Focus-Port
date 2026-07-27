@@ -2265,7 +2265,8 @@ def generate_ai_reply(conn: sqlite3.Connection, username: str, message: str) -> 
     task_lines = "\n".join([f"{index + 1}. {task}" for index, task in enumerate(tasks)]) or "目前没有待办。先新建 1 个最重要任务，再开始专注会更稳。"
     snapshot = f"我先看了一眼你的状态：本周专注约 {round((focus_week or 0) / 60, 1)} 小时，已完成 {completed_week or 0} 个任务，当前还有 {len(tasks)} 个重点待办，算力余额 {growth['coins']} CU。"
 
-    api_key = get_env_value("QWEN_API_KEY", "DASHSCOPE_API_KEY")
+    api_key = get_env_value("QWEN_API_KEY", "DASHSCOPE_API_KEY", "VITE_QWEN_API_KEY")
+    model_error = ""
     if api_key:
         try:
             from openai import OpenAI
@@ -2295,8 +2296,8 @@ def generate_ai_reply(conn: sqlite3.Connection, username: str, message: str) -> 
             model_reply = (response.choices[0].message.content or "").strip()
             if model_reply:
                 return model_reply[:1600]
-        except Exception:
-            pass
+        except Exception as error:
+            model_error = str(error)[:180]
 
     if any(key in message for key in ["你是谁", "哪个AI", "哪个ai", "什么AI", "什么ai"]) or "who are you" in lowered:
         return "我是 FocusPort 的 AI 副官，负责把你的任务、专注数据、算力记录和最近状态整合起来，给出学习计划、复盘建议和执行清单。"
@@ -2393,6 +2394,18 @@ def generate_ai_reply(conn: sqlite3.Connection, username: str, message: str) -> 
             "手机 Audit 的目标是用截图校准自律指数：娱乐和社交越低，效率时间越高，奖励越多。",
             "上传 iOS/Android 屏幕使用时间截图后，系统会识别娱乐、社交、工具、效率四类分钟数。",
             "如果识别为空，通常是部署环境没填 `DASHSCOPE_API_KEY`，需要先在 Render 的 Environment 里配置。",
+        ])
+    if not api_key:
+        return "\n".join([
+            "这类开放问题需要真正的大模型回答，但当前后端没有读取到 Qwen/DashScope 密钥。",
+            "请在 Render 的 Environment 里配置 `QWEN_API_KEY` 或 `DASHSCOPE_API_KEY`，然后重新部署。",
+            "密钥接通后，我才能回答人物、学科方法、常识推理、自由聊天这类问题。",
+        ])
+    if model_error:
+        return "\n".join([
+            "Qwen 模型调用失败，所以这次没有生成真正的 AI 回复。",
+            f"错误摘要：{model_error}",
+            "请检查 Render 环境变量里的 `QWEN_API_KEY` / `DASHSCOPE_API_KEY` 是否有效，并确认服务已重新部署。",
         ])
     return "\n".join([
         snapshot,
@@ -3182,13 +3195,14 @@ def phone_usage_stats(username: str, days: int = 7) -> dict[str, Any]:
 
 @app.post("/api/ai/chat")
 def ai_chat(payload: AIChatRequest) -> dict[str, Any]:
+    model_configured = bool(get_env_value("QWEN_API_KEY", "DASHSCOPE_API_KEY", "VITE_QWEN_API_KEY"))
     with closing(get_conn()) as conn:
         ensure_user(conn, payload.username)
         conn.execute("INSERT INTO AI_Chats (username, role, content, conversation_id) VALUES (?, 'user', ?, ?)", (payload.username, payload.message, payload.conversation_id))
         reply = generate_ai_reply(conn, payload.username, payload.message)
         conn.execute("INSERT INTO AI_Chats (username, role, content, conversation_id) VALUES (?, 'assistant', ?, ?)", (payload.username, reply, payload.conversation_id))
         conn.commit()
-    return {"success": True, "reply": reply}
+    return {"success": True, "reply": reply, "source": "model_or_fallback" if model_configured else "fallback"}
 
 
 @app.get("/api/ai/history/{username}")

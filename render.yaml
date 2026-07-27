@@ -18,3 +18,5 @@ services:
         value: 18
       - key: DASHSCOPE_API_KEY
         sync: false
+      - key: QWEN_API_KEY
+        sync: false
