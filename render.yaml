@@ -16,3 +16,5 @@ services:
         value: 3.11.0
       - key: NODE_VERSION
         value: 18
+      - key: DASHSCOPE_API_KEY
+        sync: false
