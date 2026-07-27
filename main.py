@@ -1442,6 +1442,7 @@ class PhoneUsageReportRequest(BaseModel):
     category: str = "学习"
     notes: str = ""
     screenshot_data: str = ""
+    category_breakdown: dict[str, Any] | None = None
 
 
 class AIChatRequest(BaseModel):
@@ -2579,27 +2580,90 @@ def phone_usage_reward_for_minutes(minutes: int) -> int:
     return 0
 
 
+def normalize_phone_usage_category(raw_category: Any) -> str:
+    text = str(raw_category or "").strip().lower()
+    if any(keyword in text for keyword in ("社交", "聊天", "微信", "qq", "微博", "小红书", "social")):
+        return "social"
+    if any(keyword in text for keyword in ("学习", "工作", "效率", "阅读", "文档", "课程", "product", "study", "work", "learn")):
+        return "productivity"
+    if any(keyword in text for keyword in ("工具", "系统", "浏览器", "地图", "支付", "tool", "utility")):
+        return "tools"
+    if any(keyword in text for keyword in ("娱乐", "游戏", "视频", "短视频", "直播", "音乐", "game", "video", "entertain")):
+        return "entertainment"
+    return "entertainment"
+
+
+def normalize_phone_usage_breakdown(raw: Any, fallback_entertainment: int = 0) -> dict[str, int]:
+    source = raw if isinstance(raw, dict) else {}
+    aliases = {
+        "entertainment": ("entertainment", "entertainment_minutes", "娱乐", "游戏", "视频"),
+        "social": ("social", "social_minutes", "社交"),
+        "tools": ("tools", "tool", "tool_minutes", "utility", "工具"),
+        "productivity": ("productivity", "productivity_minutes", "study", "work", "学习", "工作", "效率"),
+    }
+    breakdown: dict[str, int] = {}
+    for key, names in aliases.items():
+        value = 0
+        for name in names:
+            if name in source:
+                value = source.get(name) or 0
+                break
+        try:
+            breakdown[key] = max(0, min(1440, int(value)))
+        except Exception:
+            breakdown[key] = 0
+    if not any(breakdown.values()) and fallback_entertainment:
+        breakdown["entertainment"] = max(0, min(1440, int(fallback_entertainment or 0)))
+    return breakdown
+
+
+def phone_usage_weighted_minutes(breakdown: dict[str, int], fallback_minutes: int) -> int:
+    normalized = normalize_phone_usage_breakdown(breakdown, fallback_minutes)
+    raw_score = (
+        normalized["entertainment"] * 1.0
+        + normalized["social"] * 0.75
+        + normalized["tools"] * 0.35
+        - normalized["productivity"] * 0.45
+    )
+    return max(0, min(1440, int(round(raw_score))))
+
+
 def parse_phone_usage_ai_payload(raw_text: str) -> dict[str, Any]:
     candidate = extract_json_object_text(raw_text)
     try:
         parsed = json.loads(candidate)
     except Exception:
         return {}
-    total_minutes = max(0, min(1440, int(parsed.get("total_minutes") or parsed.get("entertainment_minutes") or 0)))
-    entertainment_minutes = max(0, min(1440, int(parsed.get("entertainment_minutes") or total_minutes)))
     apps = parsed.get("apps") if isinstance(parsed.get("apps"), list) else []
     normalized_apps = []
+    app_breakdown = {"entertainment": 0, "social": 0, "tools": 0, "productivity": 0}
     for item in apps[:12]:
         if not isinstance(item, dict):
             continue
+        minutes = max(0, min(1440, int(item.get("minutes") or 0)))
+        category = str(item.get("category") or "娱乐")[:20]
+        bucket = normalize_phone_usage_category(category)
+        app_breakdown[bucket] = min(1440, app_breakdown[bucket] + minutes)
         normalized_apps.append({
             "name": str(item.get("name") or "未知应用")[:40],
-            "minutes": max(0, min(1440, int(item.get("minutes") or 0))),
-            "category": str(item.get("category") or "娱乐")[:20],
+            "minutes": minutes,
+            "category": category,
         })
+    direct_breakdown = normalize_phone_usage_breakdown(parsed.get("category_breakdown") or parsed)
+    category_breakdown = {key: max(direct_breakdown.get(key, 0), app_breakdown.get(key, 0)) for key in direct_breakdown}
+    entertainment_minutes = max(0, min(1440, int(parsed.get("entertainment_minutes") or category_breakdown["entertainment"] or 0)))
+    if entertainment_minutes > category_breakdown["entertainment"]:
+        category_breakdown["entertainment"] = entertainment_minutes
+    total_minutes = max(0, min(1440, int(parsed.get("total_minutes") or sum(category_breakdown.values()) or entertainment_minutes)))
+    weighted_minutes = phone_usage_weighted_minutes(category_breakdown, entertainment_minutes)
     return {
         "total_minutes": total_minutes,
         "entertainment_minutes": entertainment_minutes,
+        "social_minutes": category_breakdown["social"],
+        "tool_minutes": category_breakdown["tools"],
+        "productivity_minutes": category_breakdown["productivity"],
+        "weighted_minutes": weighted_minutes,
+        "category_breakdown": category_breakdown,
         "top_category": str(parsed.get("top_category") or "娱乐")[:20],
         "apps": normalized_apps,
         "summary": str(parsed.get("summary") or "已识别屏幕使用时长。")[:240],
@@ -2861,7 +2925,8 @@ async def analyze_phone_screenshot(file: UploadFile = File(...), username: str =
                         "role": "system",
                         "content": (
                             "你是屏幕使用时长截图识别器。只输出 JSON，不要 Markdown。"
-                            "从 iOS/Android 屏幕使用时间截图中识别娱乐/游戏/社交/视频/短视频等非学习使用时长。"
+                            "从 iOS/Android 屏幕使用时间截图中识别娱乐、社交、工具、效率/学习/工作时长。"
+                            "评分目标是高效率、低娱乐、低社交。"
                         ),
                     },
                     {
@@ -2871,9 +2936,14 @@ async def analyze_phone_screenshot(file: UploadFile = File(...), username: str =
                                 "type": "text",
                                 "text": (
                                     '输出格式：{"total_minutes":总屏幕分钟数或娱乐分钟数,'
-                                    '"entertainment_minutes":娱乐相关分钟数,"top_category":"娱乐",'
-                                    '"apps":[{"name":"应用名","minutes":分钟,"category":"娱乐/社交/游戏/视频/学习"}],'
-                                    '"summary":"一句话说明"}。若截图展示多个应用，优先统计娱乐、游戏、社交、视频、短视频应用。'
+                                    '"entertainment_minutes":娱乐/游戏/视频/短视频分钟数,'
+                                    '"social_minutes":社交/聊天/社区分钟数,'
+                                    '"tool_minutes":工具/系统/浏览器/地图等中性工具分钟数,'
+                                    '"productivity_minutes":学习/工作/效率应用分钟数,'
+                                    '"category_breakdown":{"entertainment":娱乐分钟数,"social":社交分钟数,"tools":工具分钟数,"productivity":效率分钟数},'
+                                    '"top_category":"娱乐/社交/工具/效率",'
+                                    '"apps":[{"name":"应用名","minutes":分钟,"category":"娱乐/社交/工具/学习/工作"}],'
+                                    '"summary":"一句话说明"}。若截图展示多个应用，请尽量按四类分别统计。'
                                 ),
                             },
                             {"type": "image_url", "image_url": {"url": image_data_url}},
@@ -2892,9 +2962,14 @@ async def analyze_phone_screenshot(file: UploadFile = File(...), username: str =
                 "source": "manual",
                 "total_minutes": 0,
                 "entertainment_minutes": 0,
+                "social_minutes": 0,
+                "tool_minutes": 0,
+                "productivity_minutes": 0,
+                "weighted_minutes": 0,
+                "category_breakdown": {"entertainment": 0, "social": 0, "tools": 0, "productivity": 0},
                 "top_category": "娱乐",
                 "apps": [{"name": "识别失败，请手动校正", "minutes": 0, "category": "娱乐"}],
-                "summary": f"AI 识别失败，请手动输入娱乐使用分钟数：{str(error)[:80]}",
+                "summary": f"AI 识别失败，请手动校正四类使用分钟数：{str(error)[:80]}",
             }
 
     return {
@@ -2903,23 +2978,33 @@ async def analyze_phone_screenshot(file: UploadFile = File(...), username: str =
         "source": "manual",
         "total_minutes": 0,
         "entertainment_minutes": 0,
+        "social_minutes": 0,
+        "tool_minutes": 0,
+        "productivity_minutes": 0,
+        "weighted_minutes": 0,
+        "category_breakdown": {"entertainment": 0, "social": 0, "tools": 0, "productivity": 0},
         "top_category": "娱乐",
         "apps": [{"name": "等待手动校正", "minutes": 0, "category": "娱乐"}],
-        "summary": "当前环境未配置视觉识别密钥，请手动校正娱乐使用分钟数。",
+        "summary": "当前环境未配置视觉识别密钥，请手动校正四类使用分钟数。",
     }
 
 
 @app.post("/api/phone-usage/report")
 def report_phone_usage(payload: PhoneUsageReportRequest) -> dict[str, Any]:
     usage_minutes = max(0, min(1440, int(payload.usage_minutes or 0)))
-    reward_target = phone_usage_reward_for_minutes(usage_minutes)
+    category_breakdown = normalize_phone_usage_breakdown(payload.category_breakdown, usage_minutes)
+    weighted_minutes = phone_usage_weighted_minutes(category_breakdown, usage_minutes)
+    reward_target = phone_usage_reward_for_minutes(weighted_minutes)
     today_key = date.today().isoformat()
     reward_key = f"{PHONE_USAGE_REWARD_SOURCE}:{payload.username}:{today_key}"
     with closing(get_conn()) as conn:
         ensure_user(conn, payload.username)
         current = build_growth_payload(conn, payload.username)
-        new_score = discipline_score_from_phone_minutes(current["discipline_score"], usage_minutes)
-        conn.execute("INSERT INTO Phone_Usage (username, usage_minutes, category, notes, report_date) VALUES (?, ?, ?, ?, date('now', 'localtime'))", (payload.username, usage_minutes, payload.category, payload.notes))
+        new_score = discipline_score_from_phone_minutes(current["discipline_score"], weighted_minutes)
+        notes = payload.notes
+        if category_breakdown:
+            notes = f"{notes}\n分类明细: {json.dumps(category_breakdown, ensure_ascii=False)}".strip()
+        conn.execute("INSERT INTO Phone_Usage (username, usage_minutes, category, notes, report_date) VALUES (?, ?, ?, ?, date('now', 'localtime'))", (payload.username, usage_minutes, payload.category, notes))
         existing = conn.execute("SELECT value FROM Runtime_Metadata WHERE key = ?", (reward_key,)).fetchone()
         previous_reward = 0
         if existing:
@@ -2936,7 +3021,20 @@ def report_phone_usage(payload: PhoneUsageReportRequest) -> dict[str, Any]:
             INSERT OR REPLACE INTO Runtime_Metadata (key, value, updated_at)
             VALUES (?, ?, CURRENT_TIMESTAMP)
             """,
-            (reward_key, json.dumps({"username": payload.username, "date": today_key, "amount": max(previous_reward, reward_target), "usage_minutes": usage_minutes}, ensure_ascii=False)),
+            (
+                reward_key,
+                json.dumps(
+                    {
+                        "username": payload.username,
+                        "date": today_key,
+                        "amount": max(previous_reward, reward_target),
+                        "usage_minutes": usage_minutes,
+                        "weighted_minutes": weighted_minutes,
+                        "category_breakdown": category_breakdown,
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
         )
         conn.commit()
         growth = build_growth_payload(conn, payload.username)
@@ -2944,6 +3042,8 @@ def report_phone_usage(payload: PhoneUsageReportRequest) -> dict[str, Any]:
         "success": True,
         "message": f"终端使用记录已保存，获得 {reward_delta} CU",
         "usage_minutes": usage_minutes,
+        "weighted_minutes": weighted_minutes,
+        "category_breakdown": category_breakdown,
         "reward_coins": reward_delta,
         "reward_target": reward_target,
         "discipline_score": growth["discipline_score"],

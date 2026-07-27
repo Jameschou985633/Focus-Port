@@ -234,6 +234,25 @@ const phoneUsageRewardForMinutes = (minutes) => {
   return tier ? tier[1] : 0
 }
 
+const normalizePhoneUsageBreakdown = (raw = {}, fallbackEntertainment = 0) => {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  const breakdown = {
+    entertainment: Math.max(0, Math.min(1440, Number(source.entertainment ?? source.entertainment_minutes ?? source['娱乐'] ?? 0))),
+    social: Math.max(0, Math.min(1440, Number(source.social ?? source.social_minutes ?? source['社交'] ?? 0))),
+    tools: Math.max(0, Math.min(1440, Number(source.tools ?? source.tool_minutes ?? source.tool ?? source['工具'] ?? 0))),
+    productivity: Math.max(0, Math.min(1440, Number(source.productivity ?? source.productivity_minutes ?? source['效率'] ?? source['学习'] ?? source['工作'] ?? 0)))
+  }
+  if (!Object.values(breakdown).some(Boolean) && fallbackEntertainment) {
+    breakdown.entertainment = Math.max(0, Math.min(1440, Number(fallbackEntertainment || 0)))
+  }
+  return breakdown
+}
+
+const phoneUsageWeightedMinutes = (breakdown, fallbackMinutes) => {
+  const item = normalizePhoneUsageBreakdown(breakdown, fallbackMinutes)
+  return Math.max(0, Math.min(1440, Math.round(item.entertainment + item.social * 0.75 + item.tools * 0.35 - item.productivity * 0.45)))
+}
+
 const gradeExam = (exam, answers = {}) => {
   const questions = (exam.config_json.sections || []).flatMap((section) => section.questions || [])
   const mistakes = []
@@ -1087,9 +1106,14 @@ const server = http.createServer(async (req, res) => {
         source: 'manual',
         total_minutes: 0,
         entertainment_minutes: 0,
+        social_minutes: 0,
+        tool_minutes: 0,
+        productivity_minutes: 0,
+        weighted_minutes: 0,
+        category_breakdown: { entertainment: 0, social: 0, tools: 0, productivity: 0 },
         top_category: '娱乐',
         apps: [{ name: '本地开发模式请手动校正', minutes: 0, category: '娱乐' }],
-        summary: '本地开发 API 未配置视觉识别，请手动输入娱乐使用分钟数。'
+        summary: '本地开发 API 未配置视觉识别，请手动校正四类使用分钟数。'
       })
     }
 
@@ -1097,27 +1121,31 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req)
       const username = String(body.username || '').trim()
       const usageMinutes = Math.max(0, Math.min(1440, Number(body.usage_minutes || 0)))
+      const categoryBreakdown = normalizePhoneUsageBreakdown(body.category_breakdown, usageMinutes)
+      const weightedMinutes = phoneUsageWeightedMinutes(categoryBreakdown, usageMinutes)
       const category = String(body.category || '娱乐').trim() || '娱乐'
       const notes = String(body.notes || '').trim()
       const todayKey = toDateKey()
-      const rewardTarget = phoneUsageRewardForMinutes(usageMinutes)
+      const rewardTarget = phoneUsageRewardForMinutes(weightedMinutes)
       ensureUser(username)
-      state.phoneUsage[username].push({ usage_minutes: usageMinutes, category, notes, report_date: todayKey, created_at: new Date().toISOString() })
+      state.phoneUsage[username].push({ usage_minutes: usageMinutes, weighted_minutes: weightedMinutes, category_breakdown: categoryBreakdown, category, notes, report_date: todayKey, created_at: new Date().toISOString() })
       const previousReward = Math.max(0, Number(state.growth[username].daily_phone_usage_reward_amount || 0))
       const alreadyDate = state.growth[username].daily_phone_usage_reward_date === todayKey
       const rewardDelta = Math.max(0, rewardTarget - (alreadyDate ? previousReward : 0))
       if (rewardDelta > 0) {
         state.growth[username].coins += rewardDelta
-        recordComputeLedger(username, rewardDelta, PHONE_USAGE_REWARD_SOURCE, `手机娱乐时长 ${usageMinutes} 分钟奖励`)
+        recordComputeLedger(username, rewardDelta, PHONE_USAGE_REWARD_SOURCE, `手机综合干扰 ${weightedMinutes} 分钟奖励`)
       }
       state.growth[username].daily_phone_usage_reward_date = todayKey
       state.growth[username].daily_phone_usage_reward_amount = Math.max(alreadyDate ? previousReward : 0, rewardTarget)
-      state.growth[username].discipline_score = disciplineScoreFromPhoneMinutes(state.growth[username].discipline_score, usageMinutes)
+      state.growth[username].discipline_score = disciplineScoreFromPhoneMinutes(state.growth[username].discipline_score, weightedMinutes)
       await saveState()
       return send(res, 200, {
         success: true,
         message: `终端使用记录已保存，获得 ${rewardDelta} CU`,
         usage_minutes: usageMinutes,
+        weighted_minutes: weightedMinutes,
+        category_breakdown: categoryBreakdown,
         reward_coins: rewardDelta,
         reward_target: rewardTarget,
         discipline_score: state.growth[username].discipline_score,

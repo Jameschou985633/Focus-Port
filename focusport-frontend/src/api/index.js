@@ -84,8 +84,8 @@ export const itemApi = {
 }
 
 export const phoneApi = {
-  report: (username, usageMinutes, category, notes) =>
-    api.post('/api/phone-usage/report', { username, usage_minutes: usageMinutes, category, notes }),
+  report: (username, usageMinutes, category, notes, categoryBreakdown = null) =>
+    api.post('/api/phone-usage/report', { username, usage_minutes: usageMinutes, category, notes, category_breakdown: categoryBreakdown }),
   stats: (username, days) => api.get(`/api/phone-usage/stats/${username}`, { params: { days } }),
   analyzeScreenshot: (file, username) => {
     const formData = new FormData()

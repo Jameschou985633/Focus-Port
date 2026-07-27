@@ -58,6 +58,7 @@ const auditSelectedFile = ref(null)
 const auditPreview = ref('')
 const auditResult = ref(null)
 const auditMinutes = ref(0)
+const auditBreakdown = ref({ entertainment: 0, social: 0, tools: 0, productivity: 0 })
 const auditCategory = ref('娱乐')
 const auditNotes = ref('')
 const auditState = ref('idle')
@@ -86,6 +87,12 @@ const recurrenceOptions = [
   { value: 'monthly', label: '每月' }
 ]
 const auditCategories = ['娱乐', '游戏', '社交', '视频', '学习', '工作', '其他']
+const auditBreakdownLabels = [
+  { key: 'entertainment', label: '娱乐', hint: '游戏/视频/短视频' },
+  { key: 'social', label: '社交', hint: '聊天/社区' },
+  { key: 'tools', label: '工具', hint: '浏览器/地图/系统' },
+  { key: 'productivity', label: '效率', hint: '学习/工作/阅读' }
+]
 const dateKeyPattern = /^\d{4}-\d{2}-\d{2}$/
 const weekdayLabels = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const priorityRank = { '高': 0, '中': 1, '低': 2 }
@@ -908,6 +915,43 @@ const handleAIDecompose = async () => {
 
 const stageStatusLabel = (stage) => stage.status === 'done' ? '✅ 已完成' : stage.status === 'in_progress' ? '⚡ 进行中' : '🔒 待激活'
 
+const clampAuditMinutes = (value) => Math.max(0, Math.min(1440, Number(value || 0)))
+const normalizeAuditCategory = (category) => {
+  const text = String(category || '').toLowerCase()
+  if (/(社交|聊天|微信|qq|微博|小红书|social)/i.test(text)) return 'social'
+  if (/(学习|工作|效率|阅读|文档|课程|product|study|work|learn)/i.test(text)) return 'productivity'
+  if (/(工具|系统|浏览器|地图|支付|tool|utility)/i.test(text)) return 'tools'
+  return 'entertainment'
+}
+const normalizeAuditBreakdown = (raw = {}) => {
+  const next = { entertainment: 0, social: 0, tools: 0, productivity: 0 }
+  const source = raw && typeof raw === 'object' ? raw : {}
+  next.entertainment = clampAuditMinutes(source.entertainment ?? source.entertainment_minutes ?? source['娱乐'])
+  next.social = clampAuditMinutes(source.social ?? source.social_minutes ?? source['社交'])
+  next.tools = clampAuditMinutes(source.tools ?? source.tool_minutes ?? source.tool ?? source['工具'])
+  next.productivity = clampAuditMinutes(source.productivity ?? source.productivity_minutes ?? source['效率'] ?? source['学习'] ?? source['工作'])
+  return next
+}
+const breakdownFromAuditResult = (result = {}) => {
+  const direct = normalizeAuditBreakdown(result.category_breakdown || result)
+  if (Object.values(direct).some((value) => value > 0)) return direct
+  const next = { entertainment: 0, social: 0, tools: 0, productivity: 0 }
+  const apps = Array.isArray(result.apps) ? result.apps : []
+  apps.forEach((app) => {
+    const bucket = normalizeAuditCategory(app.category)
+    next[bucket] = clampAuditMinutes(next[bucket] + Number(app.minutes || 0))
+  })
+  if (!Object.values(next).some((value) => value > 0)) {
+    next.entertainment = clampAuditMinutes(result.entertainment_minutes ?? result.total_minutes ?? auditMinutes.value)
+  }
+  return next
+}
+const auditTotalMinutes = computed(() => Object.values(auditBreakdown.value).reduce((sum, value) => sum + clampAuditMinutes(value), 0))
+const auditWeightedMinutes = computed(() => {
+  const item = normalizeAuditBreakdown(auditBreakdown.value)
+  return Math.max(0, Math.round(item.entertainment + item.social * 0.75 + item.tools * 0.35 - item.productivity * 0.45))
+})
+
 const openAuditModal = () => {
   auditModalOpen.value = true
   auditMessage.value = ''
@@ -918,6 +962,7 @@ const resetAuditFlow = () => {
   auditPreview.value = ''
   auditResult.value = null
   auditMinutes.value = 0
+  auditBreakdown.value = { entertainment: 0, social: 0, tools: 0, productivity: 0 }
   auditCategory.value = '娱乐'
   auditNotes.value = ''
   auditState.value = 'idle'
@@ -944,7 +989,8 @@ const analyzeAuditScreenshot = async () => {
     const response = await phoneApi.analyzeScreenshot(auditSelectedFile.value, username.value)
     const result = response.data || {}
     auditResult.value = result
-    auditMinutes.value = Math.max(0, Number(result.entertainment_minutes ?? result.total_minutes ?? 0))
+    auditBreakdown.value = breakdownFromAuditResult(result)
+    auditMinutes.value = clampAuditMinutes(auditBreakdown.value.entertainment)
     auditCategory.value = String(result.top_category || auditCategory.value || '娱乐')
     auditState.value = 'audit'
   } catch (error) {
@@ -955,7 +1001,8 @@ const analyzeAuditScreenshot = async () => {
 }
 
 const submitAuditReport = async () => {
-  const minutes = Math.max(0, Number(auditMinutes.value || 0))
+  const breakdown = normalizeAuditBreakdown(auditBreakdown.value)
+  const minutes = clampAuditMinutes(auditTotalMinutes.value || auditMinutes.value)
   if (minutes > 1440) {
     auditMessage.value = '分钟数不能超过 1440。'
     return
@@ -963,10 +1010,11 @@ const submitAuditReport = async () => {
   auditState.value = 'submitting'
   auditMessage.value = ''
   try {
-    const response = await phoneApi.report(username.value, minutes, auditCategory.value, auditNotes.value)
+    const response = await phoneApi.report(username.value, minutes, auditCategory.value, auditNotes.value, breakdown)
     await userStore.loadGrowth()
     const reward = Math.max(0, Number(response.data?.reward_coins || 0))
-    auditMessage.value = reward > 0 ? `Audit confirmed. 获得 ${reward} CU，自律指数已刷新。` : 'Audit confirmed. 今日奖励已结算，自律指数已刷新。'
+    const weighted = Math.max(0, Number(response.data?.weighted_minutes ?? auditWeightedMinutes.value))
+    auditMessage.value = reward > 0 ? `Audit confirmed. 综合干扰 ${weighted} 分，获得 ${reward} CU。` : `Audit confirmed. 综合干扰 ${weighted} 分，今日奖励已结算。`
     auditState.value = 'done'
     window.setTimeout(() => {
       closeAuditModal()
@@ -1271,10 +1319,16 @@ onUnmounted(() => {
           <div class="audit-layout">
             <label class="audit-upload" :class="{ ready: auditPreview }"><input type="file" accept="image/*" @change="handleAuditFileSelect"><img v-if="auditPreview" :src="auditPreview" alt="手机截图预览"><span v-else><b>上传终端截图</b><small>支持 iOS / Android 屏幕使用时间截图</small></span></label>
             <div class="audit-panel">
-              <p class="audit-copy">AI scan detected: <strong>{{ auditMinutes || 0 }} entertainment mins</strong>. Awaiting Commander validation.</p>
+              <p class="audit-copy">AI scan detected: <strong>{{ auditTotalMinutes || 0 }} total mins</strong> · 综合干扰 <strong>{{ auditWeightedMinutes }}</strong>.</p>
               <button type="button" class="audit-scan" :disabled="!auditSelectedFile || auditState === 'analyzing'" @click="analyzeAuditScreenshot">{{ auditState === 'analyzing' ? '扫描中...' : 'AI 扫描截图' }}</button>
               <div v-if="auditResult" class="audit-result"><span>主要分类：{{ auditResult.top_category || auditCategory }}</span><small>{{ auditResult.summary || '请校正后确认提交。' }}</small></div>
-              <label><span>娱乐使用分钟数</span><input v-model.number="auditMinutes" type="number" min="0" max="1440" placeholder="分钟"></label>
+              <div class="audit-breakdown-grid">
+                <label v-for="item in auditBreakdownLabels" :key="item.key">
+                  <span>{{ item.label }}</span>
+                  <input v-model.number="auditBreakdown[item.key]" type="number" min="0" max="1440" placeholder="分钟">
+                  <small>{{ item.hint }}</small>
+                </label>
+              </div>
               <label><span>分类</span><select v-model="auditCategory"><option v-for="item in auditCategories" :key="item" :value="item">{{ item }}</option></select></label>
               <label><span>备注</span><textarea v-model="auditNotes" rows="3" placeholder="可选，记录今天的干扰源" /></label>
             </div>
@@ -1546,6 +1600,9 @@ button:disabled { cursor: not-allowed; }
 .audit-result { display: grid; gap: 6px; border-radius: 16px; padding: 12px; background: rgba(255,255,255,.06); }
 .audit-result span { color: white; font-weight: 800; }
 .audit-result small { color: var(--vision-muted); }
+.audit-breakdown-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.audit-breakdown-grid label { min-width: 0; border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 10px; background: rgba(255,255,255,.04); }
+.audit-breakdown-grid label small { color: var(--vision-muted); font-size: 11px; }
 .focus-init-error,.focus-mode-shell { position: relative; z-index: 2; }
 .focus-init-error { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .focus-init-error-card { max-width: 520px; border-radius: 24px; padding: 26px; background: rgba(15,23,42,.92); box-shadow: 0 30px 80px rgba(0,0,0,.28); }
