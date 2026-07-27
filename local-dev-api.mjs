@@ -787,15 +787,44 @@ const generalReply = (profile, message) => {
     aiSnapshotLine(profile),
     '',
     `你刚才问的是：“${cleanAiText(message)}”。`,
-    '我建议先把它变成一个可执行动作：',
-    '1. 写清最终结果是什么。',
-    '2. 列出现在缺的一个条件。',
-    '3. 用 25 分钟只解决这一个条件。',
+    '这个问题我可以继续拆，但你需要给我一个更具体的目标：你是想了解功能入口、修复报错、规划今天任务，还是分析学习状态？',
     '',
-    `可以从这里开始：\n${profile.pendingTasks[0] || '新建一个具体任务，例如“整理报告目录”或“完成登录演示”。'}`,
+    '你可以直接这样问：',
+    '1. “我今天有三件事，帮我排优先级。”',
+    '2. “FocusPort 的 CU 怎么获得和使用？”',
+    '3. “为什么我的截图识别没有奖励？”',
+    '4. “分析我的薄弱点。”',
     recentContext
   ].join('\n')
 }
+
+const greetingReply = (profile) => [
+  '我在。你可以直接问我三类问题：',
+  '1. 怎么使用 FocusPort：我会按页面和流程带你走。',
+  '2. 今天怎么安排：我会结合待办、专注记录和 CU 给你排优先级。',
+  '3. 哪里薄弱：我会按任务完成、专注持续、手机使用时长给你找问题。',
+  '',
+  aiSnapshotLine(profile)
+].join('\n')
+
+const usageGuideReply = () => [
+  'FocusPort 可以按这个顺序用：',
+  '1. 先去「日程管理」建今天要做的任务，给任务设置时间、优先级和预计时长。',
+  '2. 回到主页面，选中一个日程，再打开「番茄钟」开始专注。完成后会获得 CU 和成长进度。',
+  '3. CU 可以在商城购买物品，也可以用于创建游戏房间等互动功能。',
+  '4. 每天上传一次手机屏幕使用时长截图，系统会按娱乐、社交、工具、效率时间计算自律奖励。',
+  '5. 想复盘时来问我，比如“分析我的薄弱点”“今天怎么安排”“怎么减少娱乐时间”。',
+  '',
+  '你现在最适合先做第一步：新增一个具体日程，然后用 25 分钟番茄钟跑通一次完整流程。'
+].join('\n')
+
+const cuReply = () => [
+  'CU 是 FocusPort 的行动奖励，不是单纯签到货币。',
+  '主要获得方式：完成番茄钟、提交有效专注记录、低娱乐/低社交的手机使用时长 Audit、部分互动奖励。',
+  '主要消耗方式：商城购买、创建房间、后续解锁空间或道具。',
+  '',
+  '如果你想快速验证系统：先完成一轮 15 或 25 分钟专注，再去 CU 流水里看收入记录。'
+].join('\n')
 
 const generateLocalAiReply = (username, message) => {
   ensureUser(username)
@@ -804,6 +833,12 @@ const generateLocalAiReply = (username, message) => {
 
   if (includesAny(message, ['你是谁', '哪个AI', '哪个ai', '什么AI', '什么ai']) || lowered.includes('who are you')) {
     return '我是 FocusPort 的本地 AI 副官，负责把你的任务、专注数据、算力记录和最近对话整合起来，给出学习计划、复盘建议和执行清单。当前本地版本不依赖外部大模型密钥，但已经会根据你的账号状态做个性化建议。'
+  }
+  if (includesAny(message, ['你好', 'hello', 'hi', '在吗', '哈喽'])) {
+    return greetingReply(profile)
+  }
+  if (includesAny(message, ['怎么使用', '如何使用', '怎么用', '使用这个网站', '使用网站', '这个网站', '新手', '教程', '功能介绍'])) {
+    return usageGuideReply()
   }
   if (includesAny(message, ['计划', '安排', '节奏', '今晚', '今天', '明天', '日程', '规划']) || lowered.includes('plan')) {
     return planReply(profile, message)
@@ -822,6 +857,15 @@ const generateLocalAiReply = (username, message) => {
   }
   if (includesAny(message, ['项目', '代码', '部署', 'render', 'github', '后端', '前端', 'README', '答辩', '提交'])) {
     return projectReply(profile)
+  }
+  if (includesAny(message, ['cu', '算力', '购买', '商城', '物品', '金币', '奖励'])) {
+    return cuReply()
+  }
+  if (includesAny(message, ['好友', '社交', '加好友', '请求', '朋友'])) {
+    return '社交功能的基本流程是：搜索对方用户名，发送好友请求，对方账号收到后确认，双方才会成为好友。如果你在测试，请用两个不同账号分别登录验证：A 发请求，B 同意，A 再刷新好友列表。'
+  }
+  if (includesAny(message, ['手机', '截图', '屏幕时间', '屏幕使用', '自律', '娱乐时间'])) {
+    return '手机 Audit 的目标是用截图校准自律指数：娱乐和社交越低，效率时间越高，奖励越多。上传 iOS/Android 屏幕使用时间截图后，系统会识别娱乐、社交、工具、效率四类分钟数。'
   }
   return generalReply(profile, message)
 }
