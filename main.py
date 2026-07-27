@@ -2580,6 +2580,32 @@ def phone_usage_reward_for_minutes(minutes: int) -> int:
     return 0
 
 
+def parse_usage_minutes(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, min(1440, int(round(value))))
+    text = str(value).strip().lower()
+    if not text:
+        return 0
+    text = text.replace("小时", "h").replace("小時", "h").replace("时", "h")
+    text = text.replace("分钟", "m").replace("分鐘", "m").replace("分", "m")
+    hours = 0.0
+    minutes = 0.0
+    hour_match = re.search(r"(\d+(?:\.\d+)?)\s*h", text)
+    minute_match = re.search(r"(\d+(?:\.\d+)?)\s*m", text)
+    if hour_match:
+        hours = float(hour_match.group(1))
+    if minute_match:
+        minutes = float(minute_match.group(1))
+    if hour_match or minute_match:
+        return max(0, min(1440, int(round(hours * 60 + minutes))))
+    number_match = re.search(r"\d+(?:\.\d+)?", text)
+    if number_match:
+        return max(0, min(1440, int(round(float(number_match.group(0))))))
+    return 0
+
+
 def normalize_phone_usage_category(raw_category: Any) -> str:
     text = str(raw_category or "").strip().lower()
     if any(keyword in text for keyword in ("社交", "聊天", "微信", "qq", "微博", "小红书", "social")):
@@ -2608,12 +2634,9 @@ def normalize_phone_usage_breakdown(raw: Any, fallback_entertainment: int = 0) -
             if name in source:
                 value = source.get(name) or 0
                 break
-        try:
-            breakdown[key] = max(0, min(1440, int(value)))
-        except Exception:
-            breakdown[key] = 0
+        breakdown[key] = parse_usage_minutes(value)
     if not any(breakdown.values()) and fallback_entertainment:
-        breakdown["entertainment"] = max(0, min(1440, int(fallback_entertainment or 0)))
+        breakdown["entertainment"] = parse_usage_minutes(fallback_entertainment)
     return breakdown
 
 
@@ -2640,7 +2663,7 @@ def parse_phone_usage_ai_payload(raw_text: str) -> dict[str, Any]:
     for item in apps[:12]:
         if not isinstance(item, dict):
             continue
-        minutes = max(0, min(1440, int(item.get("minutes") or 0)))
+        minutes = parse_usage_minutes(item.get("minutes") or 0)
         category = str(item.get("category") or "娱乐")[:20]
         bucket = normalize_phone_usage_category(category)
         app_breakdown[bucket] = min(1440, app_breakdown[bucket] + minutes)
@@ -2651,10 +2674,10 @@ def parse_phone_usage_ai_payload(raw_text: str) -> dict[str, Any]:
         })
     direct_breakdown = normalize_phone_usage_breakdown(parsed.get("category_breakdown") or parsed)
     category_breakdown = {key: max(direct_breakdown.get(key, 0), app_breakdown.get(key, 0)) for key in direct_breakdown}
-    entertainment_minutes = max(0, min(1440, int(parsed.get("entertainment_minutes") or category_breakdown["entertainment"] or 0)))
+    entertainment_minutes = parse_usage_minutes(parsed.get("entertainment_minutes") or category_breakdown["entertainment"] or 0)
     if entertainment_minutes > category_breakdown["entertainment"]:
         category_breakdown["entertainment"] = entertainment_minutes
-    total_minutes = max(0, min(1440, int(parsed.get("total_minutes") or sum(category_breakdown.values()) or entertainment_minutes)))
+    total_minutes = parse_usage_minutes(parsed.get("total_minutes") or sum(category_breakdown.values()) or entertainment_minutes)
     weighted_minutes = phone_usage_weighted_minutes(category_breakdown, entertainment_minutes)
     return {
         "total_minutes": total_minutes,
@@ -2927,6 +2950,8 @@ async def analyze_phone_screenshot(file: UploadFile = File(...), username: str =
                             "你是屏幕使用时长截图识别器。只输出 JSON，不要 Markdown。"
                             "从 iOS/Android 屏幕使用时间截图中识别娱乐、社交、工具、效率/学习/工作时长。"
                             "评分目标是高效率、低娱乐、低社交。"
+                            "如果截图包含分类汇总，例如“社交 7小时21分钟、娱乐 2小时40分钟、工具 32分钟”，"
+                            "必须优先读取这些分类汇总，不要只读取柱状图或日均。"
                         ),
                     },
                     {
@@ -2943,7 +2968,8 @@ async def analyze_phone_screenshot(file: UploadFile = File(...), username: str =
                                     '"category_breakdown":{"entertainment":娱乐分钟数,"social":社交分钟数,"tools":工具分钟数,"productivity":效率分钟数},'
                                     '"top_category":"娱乐/社交/工具/效率",'
                                     '"apps":[{"name":"应用名","minutes":分钟,"category":"娱乐/社交/工具/学习/工作"}],'
-                                    '"summary":"一句话说明"}。若截图展示多个应用，请尽量按四类分别统计。'
+                                    '"summary":"一句话说明"}。若截图中的时长是“7小时21分钟”这类文本，'
+                                    '也要换算成整数分钟，例如 441。若截图展示多个应用，请尽量按四类分别统计。'
                                 ),
                             },
                             {"type": "image_url", "image_url": {"url": image_data_url}},
