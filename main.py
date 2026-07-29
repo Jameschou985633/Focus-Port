@@ -63,6 +63,10 @@ ADMIN_TEST_COMPUTE = 999_999_999
 
 
 def resolve_db_path() -> Path:
+    configured_path = os.getenv("FOCUSPORT_DB_PATH", "").strip()
+    if configured_path:
+        path = Path(configured_path)
+        return path if path.is_absolute() else BASE_DIR / path
     if PRIMARY_DB_PATH.exists() or not LEGACY_DB_PATH.exists():
         return PRIMARY_DB_PATH
     return LEGACY_DB_PATH
