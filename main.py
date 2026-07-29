@@ -441,26 +441,35 @@ def commercial_asset_name_cn(stem: str) -> str:
     suffix = stem.split("-")[-1].upper()
     if stem.startswith("building-skyscraper-"):
         return f"商业高楼 {suffix}"
+    if stem.startswith("low-detail-building-"):
+        return f"商业高楼升级版 {suffix}"
     if stem.startswith("low-detail-building-wide-"):
         return f"低模宽体商业建筑 {suffix}"
-    if stem.startswith("low-detail-building-"):
-        return f"低模商业建筑 {suffix}"
     return f"商业建筑 {suffix}"
 
 
+def commercial_skyscraper_model_for(stem: str) -> str:
+    if stem.startswith("low-detail-building-"):
+        suffix = stem.split("-")[-1].lower()
+        if suffix not in {"a", "b", "c", "d", "e"}:
+            suffix = "e"
+        upgraded = f"building-skyscraper-{suffix}.glb"
+        if (COMMERCIAL_MODEL_ROOT / upgraded).exists():
+            return upgraded
+    return f"{stem}.glb"
+
+
 def commercial_asset_rarity(stem: str) -> str:
-    if stem.startswith("building-skyscraper-") or "wide" in stem:
+    if stem.startswith("building-skyscraper-") or stem.startswith("low-detail-building-") or "wide" in stem:
         return "rare"
     return "common"
 
 
 def commercial_asset_price(stem: str) -> int:
-    if stem.startswith("building-skyscraper-"):
+    if stem.startswith("building-skyscraper-") or stem.startswith("low-detail-building-"):
         return 450
     if "wide" in stem:
         return 260
-    if stem.startswith("low-detail-building-"):
-        return 180
     return 290
 
 
@@ -474,11 +483,13 @@ def sync_commercial_city_items(conn: sqlite3.Connection) -> None:
     )
     for index, model_file in enumerate(model_files):
         stem = model_file.stem
+        preferred_model_file = commercial_skyscraper_model_for(stem)
+        preferred_stem = Path(preferred_model_file).stem
         name = slug_title(stem)
         name_cn = commercial_asset_name_cn(stem)
         item_code = f"commercial_{stem.replace('-', '_')}"
-        model_path = f"{COMMERCIAL_MODEL_BASE}/{model_file.name}"
-        preview_path = f"{COMMERCIAL_PREVIEW_BASE}/{stem}.png"
+        model_path = f"{COMMERCIAL_MODEL_BASE}/{preferred_model_file}"
+        preview_path = f"{COMMERCIAL_PREVIEW_BASE}/{preferred_stem}.png"
         payload = (
             name,
             name_cn,

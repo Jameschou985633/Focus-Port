@@ -412,21 +412,28 @@ const titleCaseAssetName = (stem = '') => stem
 const commercialNameCn = (stem = '') => {
   const suffix = stem.split('-').pop()?.toUpperCase() || ''
   if (stem.startsWith('building-skyscraper-')) return `商业高楼 ${suffix}`
+  if (stem.startsWith('low-detail-building-')) return `商业高楼升级版 ${suffix}`
   if (stem.startsWith('low-detail-building-wide-')) return `低模宽体商业建筑 ${suffix}`
-  if (stem.startsWith('low-detail-building-')) return `低模商业建筑 ${suffix}`
   return `商业建筑 ${suffix}`
 }
 
+const commercialSkyscraperModelFor = (stem = '') => {
+  if (!stem.startsWith('low-detail-building-')) return `${stem}.glb`
+  let suffix = stem.split('-').pop()?.toLowerCase() || 'e'
+  if (!['a', 'b', 'c', 'd', 'e'].includes(suffix)) suffix = 'e'
+  const upgraded = `building-skyscraper-${suffix}.glb`
+  return existsSync(new URL(upgraded, COMMERCIAL_MODEL_ROOT)) ? upgraded : `${stem}.glb`
+}
+
 const commercialRarity = (stem = '') => {
-  if (stem.startsWith('building-skyscraper-')) return 'rare'
+  if (stem.startsWith('building-skyscraper-') || stem.startsWith('low-detail-building-')) return 'rare'
   if (stem.includes('wide')) return 'rare'
   return 'common'
 }
 
 const commercialPrice = (stem = '') => {
-  if (stem.startsWith('building-skyscraper-')) return 450
+  if (stem.startsWith('building-skyscraper-') || stem.startsWith('low-detail-building-')) return 450
   if (stem.includes('wide')) return 260
-  if (stem.startsWith('low-detail-building-')) return 180
   return 290
 }
 
@@ -437,6 +444,8 @@ const buildCommercialCatalog = () => {
     .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
     .map((fileName, index) => {
       const stem = fileName.replace(/\.glb$/i, '')
+      const preferredFileName = commercialSkyscraperModelFor(stem)
+      const preferredStem = preferredFileName.replace(/\.glb$/i, '')
       return {
         id: 31000 + index,
         item_code: `commercial_${stem.replace(/-/g, '_')}`,
@@ -445,8 +454,8 @@ const buildCommercialCatalog = () => {
         category: 'structures',
         subcategory: 'commercial',
         tags: '3d,commercial,building',
-        model_path: `${COMMERCIAL_MODEL_BASE}/${fileName}`,
-        preview_path: `${COMMERCIAL_PREVIEW_BASE}/${stem}.png`,
+        model_path: `${COMMERCIAL_MODEL_BASE}/${preferredFileName}`,
+        preview_path: `${COMMERCIAL_PREVIEW_BASE}/${preferredStem}.png`,
         icon: '🏢',
         price_sunshine: 0,
         price_coins: commercialPrice(stem),
