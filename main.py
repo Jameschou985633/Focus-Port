@@ -4172,6 +4172,37 @@ def _arcade_game_type(room: dict[str, Any]) -> str:
     return _normalize_arcade_game(str(room.get("game_type") or room.get("game") or ""))
 
 
+def _arcade_players(room: dict[str, Any]) -> list[str]:
+    players = [str(player) for player in (room.get("players") or []) if str(player or "").strip()]
+    if not players:
+        players = [str(room.get("player_host") or "")]
+        if room.get("player_guest"):
+            players.append(str(room.get("player_guest")))
+    return [player for player in players if player]
+
+
+def _arcade_sync_payload(room: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "sync",
+        "player_host": room["player_host"],
+        "player_guest": room.get("player_guest"),
+        "players": _arcade_players(room),
+        "max_players": int(room.get("max_players") or 2),
+        "host_color": int(room.get("host_color") or 1),
+        "guest_color": int(room.get("guest_color") or 2),
+        "first_player": room.get("first_player") or room["player_host"],
+        "status": room["status"],
+        "game": room.get("game"),
+        "game_type": _arcade_game_type(room),
+        "moves": room.get("moves", []),
+        "current_turn": int(room.get("current_turn") or 1),
+        "winner": int(room.get("winner") or 0),
+        "is_draw": bool(room.get("is_draw")),
+        "last_move": room.get("last_move"),
+        "state": room.get("state"),
+    }
+
+
 def safe_admin_upload_filename(filename: str) -> str:
     raw_name = Path(filename or "").name.strip()
     stem = Path(raw_name).stem.strip()
@@ -4188,6 +4219,9 @@ def _arcade_winner_username(room: dict[str, Any]) -> str | None:
     winner = int(room.get("winner") or 0)
     if not winner:
         return None
+    players = _arcade_players(room)
+    if players and 1 <= winner <= len(players):
+        return players[winner - 1]
     if winner == int(room.get("host_color") or 1):
         return room.get("player_host")
     if winner == int(room.get("guest_color") or 2):
@@ -4254,6 +4288,8 @@ def arcade_play(payload: ArcadePlayPayload) -> dict[str, Any]:
         "status": "waiting",
         "player_host": payload.username,
         "player_guest": None,
+        "players": [payload.username],
+        "max_players": 3 if game_type == "doudizhu" else 2,
         "host_color": 1,
         "guest_color": 2,
         "first_player": payload.username,
@@ -4262,9 +4298,10 @@ def arcade_play(payload: ArcadePlayPayload) -> dict[str, Any]:
         "winner": 0,
         "is_draw": False,
         "last_move": None,
+        "state": {},
         "created_at": datetime.utcnow().isoformat(),
     }
-    return {"room_code": code, "status": "waiting", "game": payload.game, "game_type": game_type}
+    return {"success": True, "room_code": code, "status": "waiting", "game": payload.game, "game_type": game_type, "max_players": 3 if game_type == "doudizhu" else 2}
 
 
 @app.post("/api/arcade/join")
@@ -4272,29 +4309,25 @@ async def arcade_join(payload: ArcadeJoinPayload) -> dict[str, Any]:
     room = _arcade_rooms.get(payload.room_code)
     if not room:
         raise HTTPException(status_code=404, detail="房间不存在")
-    if room["status"] == "playing":
+    players = room.setdefault("players", [player for player in [room.get("player_host"), room.get("player_guest")] if player])
+    if payload.username in players:
+        raise HTTPException(status_code=400, detail="已在房间中")
+    max_players = int(room.get("max_players") or (3 if _arcade_game_type(room) == "doudizhu" else 2))
+    if len(players) >= max_players:
         raise HTTPException(status_code=400, detail="房间已满")
-    room["player_guest"] = payload.username
-    room["status"] = "playing"
+    players.append(payload.username)
+    if room.get("player_host") == payload.username:
+        room["player_host"] = payload.username
+    elif not room.get("player_guest"):
+        room["player_guest"] = payload.username
+    if len(players) >= max_players:
+        room["status"] = "playing"
     for ws_conn in list(_arcade_ws_connections.get(payload.room_code, set())):
         try:
-            await ws_conn.send_json({
-                "type": "sync",
-                "player_host": room["player_host"],
-                "player_guest": room.get("player_guest"),
-                "host_color": int(room.get("host_color") or 1),
-                "guest_color": int(room.get("guest_color") or 2),
-                "first_player": room.get("first_player") or room["player_host"],
-                "status": room["status"],
-                "moves": room.get("moves", []),
-                "current_turn": int(room.get("current_turn") or 1),
-                "winner": int(room.get("winner") or 0),
-                "is_draw": bool(room.get("is_draw")),
-                "last_move": room.get("last_move"),
-            })
+            await ws_conn.send_json(_arcade_sync_payload(room))
         except Exception:
             _arcade_ws_connections[payload.room_code].discard(ws_conn)
-    return {"room_code": payload.room_code, "status": "playing", "game": room["game"], "game_type": _normalize_arcade_game(room["game"])}
+    return {"success": True, "room_code": payload.room_code, "status": room["status"], "game": room["game"], "game_type": _normalize_arcade_game(room["game"]), "players": players, "max_players": max_players}
 
 
 @app.get("/api/arcade/room/{room_code}")
@@ -4302,7 +4335,7 @@ def arcade_room(room_code: str) -> dict[str, Any]:
     room = _arcade_rooms.get(room_code)
     if not room:
         raise HTTPException(status_code=404, detail="房间不存在")
-    return room
+    return {"success": True, **_arcade_sync_payload(room)}
 
 
 @app.websocket("/ws/arcade/{room_code}")
@@ -4317,85 +4350,50 @@ async def arcade_ws(websocket: WebSocket, room_code: str) -> None:
     _arcade_ws_connections[room_code].add(websocket)
     try:
         # Send initial sync
-        await websocket.send_json({
-            "type": "sync",
-            "player_host": room["player_host"],
-            "player_guest": room.get("player_guest"),
-            "host_color": int(room.get("host_color") or 1),
-            "guest_color": int(room.get("guest_color") or 2),
-            "first_player": room.get("first_player") or room["player_host"],
-            "status": room["status"],
-            "moves": room.get("moves", []),
-            "current_turn": int(room.get("current_turn") or 1),
-            "winner": int(room.get("winner") or 0),
-            "is_draw": bool(room.get("is_draw")),
-            "last_move": room.get("last_move"),
-        })
+        await websocket.send_json(_arcade_sync_payload(room))
         while True:
             data = await websocket.receive_text()
             msg = json.loads(data)
             msg_type = msg.get("type")
 
-            if msg_type == "move":
+            if msg_type == "state":
+                room["state"] = msg.get("state") or {}
+                state = room["state"]
+                if isinstance(state, dict):
+                    room["current_turn"] = int(state.get("currentTurn") if state.get("currentTurn") is not None else room.get("current_turn") or 1)
+                    if state.get("phase") == "ended":
+                        room["status"] = "finished"
+                        winner_index = state.get("winnerIndex")
+                        if isinstance(winner_index, int):
+                            room["winner"] = winner_index + 1
+                            _award_arcade_winner_once(room, f"arcade_win:{_arcade_game_type(room)}")
+                for ws_conn in list(_arcade_ws_connections.get(room_code, set())):
+                    try:
+                        await ws_conn.send_json(_arcade_sync_payload(room))
+                    except Exception:
+                        _arcade_ws_connections[room_code].discard(ws_conn)
+
+            elif msg_type == "move":
                 row = int(msg.get("row", -1))
                 col = int(msg.get("col", -1))
                 username = str(msg.get("username", ""))
                 expected_player = _arcade_expected_player(room)
                 if not expected_player or username != expected_player:
                     await websocket.send_json({"type": "error", "detail": "还没轮到你落子。"})
-                    await websocket.send_json({
-                        "type": "sync",
-                        "player_host": room["player_host"],
-                        "player_guest": room.get("player_guest"),
-                        "host_color": int(room.get("host_color") or 1),
-                        "guest_color": int(room.get("guest_color") or 2),
-                        "first_player": room.get("first_player") or room["player_host"],
-                        "status": room["status"],
-                        "moves": room.get("moves", []),
-                        "current_turn": int(room.get("current_turn") or 1),
-                        "winner": int(room.get("winner") or 0),
-                        "is_draw": bool(room.get("is_draw")),
-                        "last_move": room.get("last_move"),
-                    })
+                    await websocket.send_json(_arcade_sync_payload(room))
                     continue
                 if row < 0 or col < 0 or _arcade_cell_occupied(room, row, col):
                     await websocket.send_json({"type": "error", "detail": "无效落子。"})
-                    await websocket.send_json({
-                        "type": "sync",
-                        "player_host": room["player_host"],
-                        "player_guest": room.get("player_guest"),
-                        "host_color": int(room.get("host_color") or 1),
-                        "guest_color": int(room.get("guest_color") or 2),
-                        "first_player": room.get("first_player") or room["player_host"],
-                        "status": room["status"],
-                        "moves": room.get("moves", []),
-                        "current_turn": int(room.get("current_turn") or 1),
-                        "winner": int(room.get("winner") or 0),
-                        "is_draw": bool(room.get("is_draw")),
-                        "last_move": room.get("last_move"),
-                    })
+                    await websocket.send_json(_arcade_sync_payload(room))
                     continue
                 move_record = {"row": row, "col": col, "color": _arcade_expected_color(room), "username": username}
                 room.setdefault("moves", []).append(move_record)
                 room["last_move"] = move_record
                 room["current_turn"] = 2 if move_record["color"] == 1 else 1
-                room["status"] = "playing" if room.get("player_guest") else room["status"]
+                room["status"] = "playing" if len(room.get("players") or []) >= int(room.get("max_players") or 2) else room["status"]
                 for ws_conn in list(_arcade_ws_connections.get(room_code, set())):
                     try:
-                        await ws_conn.send_json({
-                            "type": "sync",
-                            "player_host": room["player_host"],
-                            "player_guest": room.get("player_guest"),
-                            "host_color": int(room.get("host_color") or 1),
-                            "guest_color": int(room.get("guest_color") or 2),
-                            "first_player": room.get("first_player") or room["player_host"],
-                            "status": room["status"],
-                            "moves": room.get("moves", []),
-                            "current_turn": int(room.get("current_turn") or 1),
-                            "winner": int(room.get("winner") or 0),
-                            "is_draw": bool(room.get("is_draw")),
-                            "last_move": room.get("last_move"),
-                        })
+                        await ws_conn.send_json(_arcade_sync_payload(room))
                     except Exception:
                         _arcade_ws_connections[room_code].discard(ws_conn)
 
@@ -4408,20 +4406,7 @@ async def arcade_ws(websocket: WebSocket, room_code: str) -> None:
                 room["current_turn"] = 2 if _arcade_expected_color(room) == 1 else 1
                 for ws_conn in list(_arcade_ws_connections.get(room_code, set())):
                     try:
-                        await ws_conn.send_json({
-                            "type": "sync",
-                            "player_host": room["player_host"],
-                            "player_guest": room.get("player_guest"),
-                            "host_color": int(room.get("host_color") or 1),
-                            "guest_color": int(room.get("guest_color") or 2),
-                            "first_player": room.get("first_player") or room["player_host"],
-                            "status": room["status"],
-                            "moves": room.get("moves", []),
-                            "current_turn": int(room.get("current_turn") or 1),
-                            "winner": int(room.get("winner") or 0),
-                            "is_draw": bool(room.get("is_draw")),
-                            "last_move": room.get("last_move"),
-                        })
+                        await ws_conn.send_json(_arcade_sync_payload(room))
                     except Exception:
                         _arcade_ws_connections[room_code].discard(ws_conn)
 
@@ -4433,20 +4418,7 @@ async def arcade_ws(websocket: WebSocket, room_code: str) -> None:
                     _award_arcade_winner_once(room, f"arcade_win:{_arcade_game_type(room)}")
                 for ws_conn in list(_arcade_ws_connections.get(room_code, set())):
                     try:
-                        await ws_conn.send_json({
-                            "type": "sync",
-                            "player_host": room["player_host"],
-                            "player_guest": room.get("player_guest"),
-                            "host_color": int(room.get("host_color") or 1),
-                            "guest_color": int(room.get("guest_color") or 2),
-                            "first_player": room.get("first_player") or room["player_host"],
-                            "status": room["status"],
-                            "moves": room.get("moves", []),
-                            "current_turn": int(room.get("current_turn") or 1),
-                            "winner": int(room.get("winner") or 0),
-                            "is_draw": bool(room.get("is_draw")),
-                            "last_move": room.get("last_move"),
-                        })
+                        await ws_conn.send_json(_arcade_sync_payload(room))
                     except Exception:
                         _arcade_ws_connections[room_code].discard(ws_conn)
 

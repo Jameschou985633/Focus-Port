@@ -891,6 +891,8 @@ const arcadeRoomPayload = (room = {}) => ({
   status: room.status,
   player_host: room.player_host,
   player_guest: room.player_guest || null,
+  players: Array.isArray(room.players) ? room.players : [room.player_host, room.player_guest].filter(Boolean),
+  max_players: Number(room.max_players || 2),
   host_color: 1,
   guest_color: 2,
   first_player: room.player_host,
@@ -899,6 +901,7 @@ const arcadeRoomPayload = (room = {}) => ({
   winner: Number(room.winner || 0),
   is_draw: Boolean(room.is_draw),
   last_move: room.last_move || null,
+  state: room.state || {},
   created_at: room.created_at
 })
 
@@ -980,15 +983,20 @@ const arcadeSyncPayload = (room = {}) => ({
   type: 'sync',
   player_host: room.player_host,
   player_guest: room.player_guest || null,
+  players: Array.isArray(room.players) ? room.players : [room.player_host, room.player_guest].filter(Boolean),
+  max_players: Number(room.max_players || 2),
   host_color: 1,
   guest_color: 2,
   first_player: room.player_host,
+  game: room.game,
+  game_type: room.game_type || normalizeArcadeGame(room.game),
   status: room.status,
   moves: room.moves || [],
   current_turn: Number(room.current_turn || 1),
   winner: Number(room.winner || 0),
   is_draw: Boolean(room.is_draw),
-  last_move: room.last_move || null
+  last_move: room.last_move || null,
+  state: room.state || {}
 })
 
 const arcadeExpectedPlayer = (room = {}) => {
@@ -1000,6 +1008,8 @@ const arcadeExpectedColor = (room = {}) => Number(room.current_turn || 1) === 2 
 const arcadeWinnerUsername = (room = {}) => {
   const winner = Number(room.winner || 0)
   if (!winner) return ''
+  const players = Array.isArray(room.players) ? room.players.filter(Boolean) : []
+  if (players.length && winner >= 1 && winner <= players.length) return players[winner - 1] || ''
   if (winner === 1) return room.player_host || ''
   if (winner === 2) return room.player_guest || ''
   return ''
@@ -1374,11 +1384,14 @@ const server = http.createServer(async (req, res) => {
           status: game.endsWith('_online') ? 'waiting' : 'solo',
           player_host: username,
           player_guest: null,
+          players: [username],
+          max_players: gameType === 'doudizhu' ? 3 : 2,
           moves: [],
           current_turn: 1,
           winner: 0,
           is_draw: false,
           last_move: null,
+          state: {},
           winner_rewarded: false,
           created_at: new Date().toISOString()
         }
@@ -1396,14 +1409,20 @@ const server = http.createServer(async (req, res) => {
         ensureUser(username)
         const room = state.arcadeRooms[roomCode]
         if (!room) return { status: 404, payload: { detail: '房间不存在' } }
-        if (room.status === 'playing' && room.player_guest && room.player_guest !== username) {
+        if (!Array.isArray(room.players)) room.players = [room.player_host, room.player_guest].filter(Boolean)
+        const maxPlayers = Number(room.max_players || (normalizeArcadeGame(room.game) === 'doudizhu' ? 3 : 2))
+        if (room.players.includes(username)) {
+          return { status: 400, payload: { detail: '已在房间中' } }
+        }
+        if (room.players.length >= maxPlayers) {
           return { status: 400, payload: { detail: '房间已满' } }
         }
         if (room.player_host === username) {
           return { status: 400, payload: { detail: '不能加入自己创建的房间' } }
         }
-        room.player_guest = username
-        room.status = 'playing'
+        room.players.push(username)
+        if (!room.player_guest) room.player_guest = username
+        if (room.players.length >= maxPlayers) room.status = 'playing'
         broadcastArcadeRoom(roomCode, arcadeSyncPayload(room))
         return { status: 200, payload: arcadeRoomPayload(room) }
       })
@@ -1812,6 +1831,19 @@ server.on('upgrade', (req, socket) => {
     if (!msg) return
     if (msg.type === 'close') {
       socket.end()
+      return
+    }
+
+    if (msg.type === 'state') {
+      room.state = msg.state || {}
+      if (room.state && Number.isFinite(Number(room.state.currentTurn))) room.current_turn = Number(room.state.currentTurn)
+      if (room.state?.phase === 'ended') {
+        room.status = 'finished'
+        if (Number.isInteger(room.state.winnerIndex)) room.winner = Number(room.state.winnerIndex) + 1
+        if (room.winner) awardArcadeWinnerOnce(room)
+      }
+      await saveState()
+      broadcastArcadeRoom(roomCode, arcadeSyncPayload(room))
       return
     }
 

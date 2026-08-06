@@ -28,7 +28,8 @@ const onlineRoutes = {
   gomoku: 'gomoku',
   tictactoe: 'tictactoe',
   connect4: 'connect-four',
-  reversi: 'reversi'
+  reversi: 'reversi',
+  doudizhu: 'doudizhu'
 }
 
 let pollTimer = null
@@ -51,10 +52,6 @@ function closeGameModal() {
 }
 
 function showOnlineOptions() {
-  if (selectedGame.value?.id === 'doudizhu') {
-    createError.value = '斗地主暂时只支持本地三人对局'
-    return
-  }
   onlineStep.value = 'choose'
 }
 
@@ -117,7 +114,8 @@ function pollForOpponent() {
     if (!roomCode.value) return
     try {
       const res = await arcadeApi.room(roomCode.value)
-      if (res.data?.status === 'playing' && res.data?.player_guest) {
+      const playersReady = Array.isArray(res.data?.players) && res.data.players.length >= Number(res.data.max_players || 2)
+      if (res.data?.status === 'playing' && (res.data?.player_guest || playersReady)) {
         clearInterval(pollTimer)
         pollTimer = null
         const g = selectedGame.value
@@ -202,9 +200,9 @@ onUnmounted(() => {
               <span class="mode-icon">AI</span>
               <span>人机对战</span>
             </button>
-            <button class="mode-btn" :disabled="selectedGame.id === 'doudizhu'" @click="showOnlineOptions">
+            <button class="mode-btn" @click="showOnlineOptions">
               <span class="mode-icon">联</span>
-              <span>{{ selectedGame.id === 'doudizhu' ? '暂不支持联机' : '两人联机' }}</span>
+              <span>{{ selectedGame.id === 'doudizhu' ? '三人联机' : '两人联机' }}</span>
               <span class="cu-badge">{{ ONLINE_ROOM_COST }} CU</span>
             </button>
           </div>

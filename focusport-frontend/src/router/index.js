@@ -182,6 +182,12 @@ const routes = [
     meta: { title: '斗地主', requiresAuth: true }
   },
   {
+    path: '/playground/doudizhu/online/:roomCode',
+    name: 'DoudizhuOnline',
+    component: () => import('../components/DoudizhuGame.vue'),
+    meta: { title: '斗地主', requiresAuth: true }
+  },
+  {
     path: '/more',
     name: 'More',
     component: () => import('../components/MorePage.vue'),

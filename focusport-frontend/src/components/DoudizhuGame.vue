@@ -1,8 +1,12 @@
 <script setup>
-import { computed, nextTick, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { arcadeApi, createArcadeWebSocket } from '../api'
+import { useUserStore } from '../stores/user'
 
 const router = useRouter()
+const route = useRoute()
+const userStore = useUserStore()
 
 const rankLabels = {
   3: '3',
@@ -45,21 +49,36 @@ const passCount = ref(0)
 const winner = ref(null)
 const history = ref([])
 const busy = ref(false)
+const isOnline = ref(false)
+const roomCode = ref('')
+const onlinePlayers = ref([])
+const onlineReady = ref(false)
+const onlineError = ref('')
+let ws = null
+let pendingOnlineState = null
+let applyingOnlineState = false
 
-const user = computed(() => players.value[1])
+const username = computed(() => userStore.username || '你')
+const userIndex = computed(() => {
+  if (!isOnline.value) return 1
+  const index = players.value.findIndex(player => player.name === username.value)
+  return index >= 0 ? index : 1
+})
+const opponents = computed(() => players.value.map((player, index) => ({ ...player, index })).filter(player => player.index !== userIndex.value))
+const user = computed(() => players.value[userIndex.value] || players.value[1])
 const selectedCards = computed(() =>
   user.value.hand.filter(card => selectedIds.value.has(card.id)).sort(compareCards)
 )
 const selectedPattern = computed(() => describePattern(analyzeCards(selectedCards.value)))
 const canPlaySelected = computed(() => {
-  if (phase.value !== 'playing' || currentTurn.value !== 1 || selectedCards.value.length === 0) return false
+  if (phase.value !== 'playing' || currentTurn.value !== userIndex.value || selectedCards.value.length === 0) return false
   const pattern = analyzeCards(selectedCards.value)
   return Boolean(pattern && canBeat(pattern, lastPlay.value?.pattern || null))
 })
 const canPass = computed(() =>
   phase.value === 'playing' &&
-  currentTurn.value === 1 &&
-  Boolean(lastPlay.value && lastPlay.value.playerIndex !== 1)
+  currentTurn.value === userIndex.value &&
+  Boolean(lastPlay.value && lastPlay.value.playerIndex !== userIndex.value)
 )
 const lastPlayText = computed(() => {
   if (!lastPlay.value) return '当前无人出牌'
@@ -116,10 +135,10 @@ function deal() {
   players.value.forEach(player => sortHand(player.hand))
   landlordCards.value = deck.slice(51).sort(compareCards)
   selectedIds.value = new Set()
-  currentTurn.value = 1
+  currentTurn.value = isOnline.value ? 0 : 1
   landlordIndex.value = null
   phase.value = 'bidding'
-  message.value = '请选择是否抢地主'
+  message.value = isOnline.value ? `联机房间 ${roomCode.value}：请选择是否抢地主` : '请选择是否抢地主'
   lastPlay.value = null
   passCount.value = 0
   winner.value = null
@@ -137,19 +156,32 @@ function chooseLandlord(index) {
   phase.value = 'playing'
   currentTurn.value = index
   message.value = `${players.value[index].name} 成为地主，先出牌`
-  if (index !== 1) {
+  if (!isOnline.value && index !== 1) {
     void scheduleAiTurn()
   }
+  syncOnlineState()
 }
 
 function userBid(grab) {
   if (phase.value !== 'bidding') return
   if (grab) {
-    chooseLandlord(1)
+    chooseLandlord(userIndex.value)
     return
   }
-  const aiIndex = pickAiLandlord()
-  chooseLandlord(aiIndex)
+  if (isOnline.value) {
+    passCount.value += 1
+    if (passCount.value >= 3) {
+      chooseLandlord(0)
+      return
+    }
+    const next = nextPlayer(userIndex.value)
+    currentTurn.value = next
+    message.value = `${players.value[userIndex.value].name} 不抢，轮到 ${players.value[next].name}`
+    syncOnlineState()
+  } else {
+    const aiIndex = pickAiLandlord()
+    chooseLandlord(aiIndex)
+  }
 }
 
 function pickAiLandlord() {
@@ -163,7 +195,7 @@ function handScore(hand) {
 }
 
 function toggleCard(card) {
-  if (phase.value !== 'playing' || currentTurn.value !== 1) return
+  if (phase.value !== 'playing' || currentTurn.value !== userIndex.value) return
   const next = new Set(selectedIds.value)
   if (next.has(card.id)) {
     next.delete(card.id)
@@ -257,9 +289,9 @@ function playSelected() {
     message.value = '这手牌暂时不能出'
     return
   }
-  playCards(1, selectedCards.value)
+  playCards(userIndex.value, selectedCards.value)
   selectedIds.value = new Set()
-  void scheduleAiTurn()
+  if (!isOnline.value) void scheduleAiTurn()
 }
 
 function playCards(playerIndex, cards) {
@@ -279,24 +311,28 @@ function playCards(playerIndex, cards) {
     phase.value = 'ended'
     winner.value = players.value[playerIndex]
     message.value = `${winner.value.name} 获胜`
+    syncOnlineState()
     return
   }
   currentTurn.value = nextPlayer(playerIndex)
   message.value = `轮到 ${players.value[currentTurn.value].name}`
+  syncOnlineState()
 }
 
 function passTurn() {
   if (!canPass.value) return
   selectedIds.value = new Set()
-  history.value.unshift({ id: `${Date.now()}-pass-user`, player: '你', text: '不要' })
+  const index = userIndex.value
+  history.value.unshift({ id: `${Date.now()}-pass-user`, player: players.value[index].name, text: '不要' })
   passCount.value += 1
   if (passCount.value >= 2) {
-    resetRoundAfterPasses(1)
+    resetRoundAfterPasses(index)
   } else {
-    currentTurn.value = nextPlayer(1)
+    currentTurn.value = nextPlayer(index)
     message.value = `轮到 ${players.value[currentTurn.value].name}`
   }
-  void scheduleAiTurn()
+  syncOnlineState()
+  if (!isOnline.value) void scheduleAiTurn()
 }
 
 function resetRoundAfterPasses(lastIndex) {
@@ -313,7 +349,7 @@ function nextPlayer(index) {
 
 async function scheduleAiTurn() {
   await nextTick()
-  if (busy.value || phase.value !== 'playing' || currentTurn.value === 1) return
+  if (isOnline.value || busy.value || phase.value !== 'playing' || currentTurn.value === 1) return
   busy.value = true
   window.setTimeout(() => {
     runAiTurns()
@@ -322,7 +358,7 @@ async function scheduleAiTurn() {
 }
 
 function runAiTurns() {
-  if (phase.value !== 'playing' || currentTurn.value === 1) return
+  if (isOnline.value || phase.value !== 'playing' || currentTurn.value === 1) return
   const aiIndex = currentTurn.value
   const aiCards = findAiPlay(players.value[aiIndex].hand, lastPlay.value)
   if (aiCards.length) {
@@ -413,15 +449,137 @@ function describeCards(cards) {
     .join(' ')
 }
 
+function serializeState() {
+  return {
+    players: players.value.map(player => ({
+      id: player.id,
+      name: player.name,
+      role: player.role,
+      hand: player.hand.map(card => ({ ...card }))
+    })),
+    landlordCards: landlordCards.value.map(card => ({ ...card })),
+    currentTurn: currentTurn.value,
+    landlordIndex: landlordIndex.value,
+    phase: phase.value,
+    lastPlay: lastPlay.value,
+    passCount: passCount.value,
+    winnerIndex: winner.value ? players.value.findIndex(player => player.name === winner.value.name) : null,
+    history: history.value.slice(0, 6),
+    message: message.value
+  }
+}
+
+function applyOnlineState(state) {
+  if (!state || !Array.isArray(state.players)) return
+  applyingOnlineState = true
+  players.value = state.players.map((player, index) => ({
+    id: player.id || `online-${index}`,
+    name: player.name || `玩家${index + 1}`,
+    role: player.role || '农民',
+    hand: Array.isArray(player.hand) ? player.hand.map(card => ({ ...card })) : []
+  }))
+  players.value.forEach(player => sortHand(player.hand))
+  landlordCards.value = Array.isArray(state.landlordCards) ? state.landlordCards.map(card => ({ ...card })) : []
+  currentTurn.value = Number(state.currentTurn ?? 0)
+  landlordIndex.value = state.landlordIndex ?? null
+  phase.value = state.phase || 'bidding'
+  lastPlay.value = state.lastPlay || null
+  passCount.value = Number(state.passCount || 0)
+  winner.value = Number.isInteger(state.winnerIndex) ? players.value[state.winnerIndex] : null
+  history.value = Array.isArray(state.history) ? state.history.slice(0, 6) : []
+  message.value = state.message || ''
+  selectedIds.value = new Set()
+  applyingOnlineState = false
+}
+
+function syncOnlineState() {
+  if (!isOnline.value || applyingOnlineState) return
+  const payload = { type: 'state', username: username.value, state: serializeState() }
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(payload))
+  } else {
+    pendingOnlineState = payload
+  }
+}
+
+function applyRoomPlayers(names = []) {
+  const nextNames = names.filter(Boolean).slice(0, 3)
+  while (nextNames.length < 3) nextNames.push(`等待玩家${nextNames.length + 1}`)
+  players.value = nextNames.map((name, index) => ({
+    id: `online-${index}`,
+    name,
+    role: '农民',
+    hand: players.value[index]?.hand || []
+  }))
+}
+
+function handleArcadeSync(payload = {}) {
+  onlinePlayers.value = Array.isArray(payload.players) ? payload.players.filter(Boolean) : []
+  onlineReady.value = payload.status === 'playing' && onlinePlayers.value.length >= 3
+  if (payload.state && Array.isArray(payload.state.players)) {
+    applyOnlineState(payload.state)
+    return
+  }
+  applyRoomPlayers(onlinePlayers.value)
+  message.value = onlineReady.value
+    ? `联机房间 ${roomCode.value} 已就绪，等待房主发牌`
+    : `联机房间 ${roomCode.value}：等待 ${Math.max(0, 3 - onlinePlayers.value.length)} 名玩家加入`
+  const isHost = onlinePlayers.value[0] === username.value
+  if (onlineReady.value && isHost && phase.value === 'bidding' && !players.value.some(player => player.hand.length)) {
+    deal()
+    syncOnlineState()
+  }
+}
+
+async function initOnlineRoom() {
+  try {
+    const res = await arcadeApi.room(roomCode.value)
+    handleArcadeSync(res.data || {})
+    ws = createArcadeWebSocket(roomCode.value)
+    ws.onopen = () => {
+      if (pendingOnlineState) {
+        ws.send(JSON.stringify(pendingOnlineState))
+        pendingOnlineState = null
+      }
+    }
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        if (payload.type === 'sync') handleArcadeSync(payload)
+        if (payload.type === 'error') onlineError.value = payload.detail || '联机同步失败'
+      } catch (error) {
+        console.error('Doudizhu websocket parse error', error)
+      }
+    }
+    ws.onerror = () => { onlineError.value = '联机连接异常，请重新进入房间' }
+  } catch (error) {
+    onlineError.value = error.response?.data?.detail || '房间加载失败'
+  }
+}
+
 function restart() {
   deal()
+  syncOnlineState()
 }
 
 function goBack() {
   router.push('/playground')
 }
 
-deal()
+onMounted(() => {
+  const code = route.params.roomCode || route.query.roomCode
+  if (code) {
+    isOnline.value = true
+    roomCode.value = String(code).toUpperCase()
+    void initOnlineRoom()
+  } else {
+    deal()
+  }
+})
+
+onUnmounted(() => {
+  if (ws) ws.close()
+})
 </script>
 
 <template>
@@ -431,22 +589,24 @@ deal()
         <button class="ghost-btn" type="button" @click="goBack">返回</button>
         <div>
           <h1>斗地主</h1>
-          <p>本地三人对局</p>
+          <p>{{ isOnline ? `联机房间 ${roomCode}` : '本地三人对局' }}</p>
         </div>
         <button class="ghost-btn" type="button" @click="restart">重开</button>
       </header>
+      <p v-if="onlineError" class="online-error">{{ onlineError }}</p>
+      <p v-if="isOnline && !onlineReady" class="online-waiting">等待玩家加入：{{ onlinePlayers.length }}/3</p>
 
       <div class="table-layout">
-        <aside class="opponent left-player" :class="{ active: currentTurn === 0 && phase === 'playing' }">
-          <span class="role">{{ players[0].role }}</span>
-          <strong>{{ players[0].name }}</strong>
-          <span>{{ players[0].hand.length }} 张</span>
+        <aside class="opponent left-player" :class="{ active: currentTurn === opponents[0]?.index && phase === 'playing' }">
+          <span class="role">{{ opponents[0]?.role || '农民' }}</span>
+          <strong>{{ opponents[0]?.name || '等待中' }}</strong>
+          <span>{{ opponents[0]?.hand?.length || 0 }} 张</span>
         </aside>
 
-        <aside class="opponent right-player" :class="{ active: currentTurn === 2 && phase === 'playing' }">
-          <span class="role">{{ players[2].role }}</span>
-          <strong>{{ players[2].name }}</strong>
-          <span>{{ players[2].hand.length }} 张</span>
+        <aside class="opponent right-player" :class="{ active: currentTurn === opponents[1]?.index && phase === 'playing' }">
+          <span class="role">{{ opponents[1]?.role || '农民' }}</span>
+          <strong>{{ opponents[1]?.name || '等待中' }}</strong>
+          <span>{{ opponents[1]?.hand?.length || 0 }} 张</span>
         </aside>
 
         <section class="center-board">
@@ -483,8 +643,8 @@ deal()
       </section>
 
       <section class="controls" v-if="phase === 'bidding'">
-        <button class="primary-btn" type="button" @click="userBid(true)">抢地主</button>
-        <button class="secondary-btn" type="button" @click="userBid(false)">不抢</button>
+        <button class="primary-btn" type="button" :disabled="isOnline && (!onlineReady || currentTurn !== userIndex)" @click="userBid(true)">抢地主</button>
+        <button class="secondary-btn" type="button" :disabled="isOnline && (!onlineReady || currentTurn !== userIndex)" @click="userBid(false)">不抢</button>
       </section>
 
       <section class="controls" v-else-if="phase === 'playing'">
@@ -498,7 +658,7 @@ deal()
         <button class="primary-btn" type="button" @click="restart">再来一局</button>
       </section>
 
-      <section class="hand-zone" :class="{ active: currentTurn === 1 && phase === 'playing' }">
+      <section class="hand-zone" :class="{ active: currentTurn === userIndex && phase === 'playing' }">
         <button
           v-for="card in user.hand"
           :key="card.id"
@@ -561,6 +721,25 @@ deal()
   color: rgba(248, 250, 252, 0.66);
   text-align: center;
   font-size: 13px;
+}
+
+.online-error,
+.online-waiting {
+  margin: 0 18px;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.online-error {
+  color: #fecdd3;
+  background: rgba(127, 29, 29, 0.42);
+}
+
+.online-waiting {
+  color: #dbeafe;
+  background: rgba(37, 99, 235, 0.24);
 }
 
 .ghost-btn,
