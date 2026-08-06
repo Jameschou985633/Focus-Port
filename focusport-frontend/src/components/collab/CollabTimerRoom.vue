@@ -58,6 +58,19 @@ const toastReward = ref(0)
 const wsActive = ref(true)
 const reconnectAttempts = ref(0)
 
+const focusExitSlogans = [
+  '再坚持一下，真正的进步往往发生在想放弃之后。',
+  '先别急着退出，把这一轮做完，给自己一个确定的胜利。',
+  '专注不是靠情绪，是靠一次次把手放回任务上。',
+  '你已经开始了，这本身就比停在原地更强。',
+  '现在多坚持一分钟，等会儿就少一点遗憾。'
+]
+
+const confirmFocusExit = (message) => {
+  const slogan = focusExitSlogans[Math.floor(Math.random() * focusExitSlogans.length)]
+  return confirm(`${slogan}\n\n${message}`)
+}
+
 // 主题色
 const themeAccents = {
   space: { accent: 'rgba(0,255,255,0.34)', glow: 'rgba(0,255,255,0.3)' },
@@ -217,7 +230,7 @@ const takeSeat = async (seatIndex) => {
 // 离开座位
 const leaveSeat = async () => {
   if (isGrowing.value) {
-    if (!confirm('正在专注中，离开会丢失进度，确定离开吗？')) return
+    if (!confirmFocusExit('正在专注中，离开会丢失进度，确定离开吗？')) return false
     await endGrow('failed')
   }
 
@@ -228,8 +241,10 @@ const leaveSeat = async () => {
     })
     mySeat.value = null
     loadRoom()
+    return true
   } catch (err) {
     console.error('离开失败:', err)
+    return false
   }
 }
 
@@ -293,7 +308,7 @@ const endGrow = async (status) => {
 
 // 放弃专注
 const giveUpGrow = async () => {
-  if (!confirm('确定要放弃吗？进度将不会保存！')) return
+  if (!confirmFocusExit('确定要放弃吗？进度将不会保存！')) return
   await endGrow('failed')
 }
 
@@ -330,7 +345,9 @@ const getGrowingInfo = (username) => {
 
 // 退出房间
 const exitRoom = async () => {
-  await leaveSeat()
+  if (!isGrowing.value && !confirmFocusExit('确定要离开协作舱吗？')) return
+  const hasLeft = await leaveSeat()
+  if (!hasLeft) return
   router.push('/collab')
 }
 

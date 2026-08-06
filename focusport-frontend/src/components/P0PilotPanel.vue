@@ -14,6 +14,18 @@ const modalOpen = ref(false)
 const selectedTaskId = ref<string | null>(null)
 const lastReward = ref<AIAnalysisPayload | null>(null)
 
+const focusExitSlogans = [
+  '再坚持一下，真正的进步往往发生在想放弃之后。',
+  '先别急着退出，把这一轮做完，给自己一个确定的胜利。',
+  '专注不是靠情绪，是靠一次次把手放回任务上。',
+  '你已经开始了，这本身就比停在原地更强。',
+  '现在多坚持一分钟，等会儿就少一点遗憾。'
+]
+
+const pickFocusExitSlogan = (): string => {
+  return focusExitSlogans[Math.floor(Math.random() * focusExitSlogans.length)]
+}
+
 const selectedTask = computed(() => {
   if (!selectedTaskId.value) return undefined
   return taskStore.getTaskById(selectedTaskId.value)
@@ -41,9 +53,17 @@ const handleStartEngine = (taskId: string): void => {
   if (pomodoroStore.mode === 'break' && pomodoroStore.status === 'running') return
 
   if (pomodoroStore.mode === 'focus' && (pomodoroStore.status === 'running' || pomodoroStore.status === 'paused')) {
+    const shouldInterrupt = window.confirm(`${pickFocusExitSlogan()}\n\n切换任务会中断当前专注，确定继续吗？`)
+    if (!shouldInterrupt) return
     pomodoroStore.interruptFocus()
   }
   pomodoroStore.startFocus(taskId)
+}
+
+const confirmInterruptFocus = (): void => {
+  const shouldInterrupt = window.confirm(`${pickFocusExitSlogan()}\n\n确定要中断本轮专注吗？`)
+  if (!shouldInterrupt) return
+  pomodoroStore.interruptFocus()
 }
 
 const handleCompleteTask = (taskId: string): void => {
@@ -93,7 +113,7 @@ onMounted(() => {
         type="button"
         class="btn danger"
         :disabled="!(pomodoroStore.mode === 'focus' && (pomodoroStore.status === 'running' || pomodoroStore.status === 'paused'))"
-        @click="pomodoroStore.interruptFocus()"
+        @click="confirmInterruptFocus"
       >
         中断本轮
       </button>
