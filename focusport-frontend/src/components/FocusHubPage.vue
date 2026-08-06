@@ -22,6 +22,13 @@ const durationOptions = [15, 30, 45, 60, 90, 120]
 const DURATION_MAGNET_RANGE = 3
 const MIN_FOCUS_MINUTES = 5
 const MAX_FOCUS_MINUTES = 180
+const focusExitSlogans = [
+  '再坚持一下，真正的进步往往发生在想放弃之后。',
+  '先别急着退出，把这一轮做完，给自己一个确定的胜利。',
+  '专注不是靠情绪，是靠一次次把手放回任务上。',
+  '你已经开始了，这本身就比停在原地更强。',
+  '现在多坚持一分钟，等会儿就少一点遗憾。'
+]
 const selectedDuration = ref(25)
 const isActionHydrating = ref(true)
 const isStartingFocus = ref(false)
@@ -775,7 +782,20 @@ const openPomodoroModal = () => {
   pomodoroModalOpen.value = true
 }
 
-const closePomodoroModal = () => {
+const isFocusSessionStarted = () => {
+  const pomodoro = focusHubStore.pomodoro
+  if (!pomodoro || pomodoro.mode !== 'focus') return false
+  const totalSeconds = Math.max(1, Number(pomodoro.focusMinutes || selectedDuration.value || 25) * 60)
+  return Boolean(pomodoro.isRunning) || Number(pomodoro.remainingSeconds) < totalSeconds
+}
+
+const confirmFocusExit = (message) => {
+  const slogan = focusExitSlogans[Math.floor(Math.random() * focusExitSlogans.length)]
+  return window.confirm(`${slogan}\n\n${message}`)
+}
+
+const closePomodoroModal = (options = {}) => {
+  if (!options.force && isFocusSessionStarted() && !confirmFocusExit('关闭番茄钟设置不会保存新的调整，确定退出吗？')) return
   pomodoroModalOpen.value = false
 }
 
@@ -811,13 +831,20 @@ const handleToggleFocus = () => {
 const handleStartFocusFromModal = async () => {
   if (focusActionDisabled.value) return
   await handleStartFocus()
-  closePomodoroModal()
+  closePomodoroModal({ force: true })
 }
 
 const handleAbortFocus = () => {
+  if (!confirmFocusExit('确定要退出并中断本轮专注吗？本轮进度将被清空。')) return
   focusHubStore.pausePomodoro()
   focusHubStore.resetPomodoro()
   activeFocusTodoId.value = ''
+}
+
+const handleBeforeUnload = (event) => {
+  if (!isFocusSessionStarted()) return
+  event.preventDefault()
+  event.returnValue = ''
 }
 
 const markTaskDone = async (taskId) => {
@@ -1039,6 +1066,7 @@ onMounted(async () => {
     loadTaskStages()
     await Promise.all([loadAvatarProfile(), loadTodoTasks(), userStore.loadGrowth()])
     syncSelectedTaskDuration()
+    window.addEventListener('beforeunload', handleBeforeUnload)
   } catch (error) {
     console.error('FocusHub init failed:', error)
     initError.value = error instanceof Error ? error.message : 'Unknown initialization error'
@@ -1058,6 +1086,7 @@ watch(selectedTodoTaskId, () => { syncSelectedTaskDuration() })
 watch(auditModalOpen, (open) => { if (!open) resetAuditFlow() })
 onUnmounted(() => {
   document.body.style.overflow = ''
+  window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>
 
