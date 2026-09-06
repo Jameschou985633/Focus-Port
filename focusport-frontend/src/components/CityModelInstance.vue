@@ -54,13 +54,15 @@ const cloneMaterialForDisplay = (material, forcedMap = null) => {
   const next = material?.clone ? material.clone() : material
   if (!next) return next
 
-  const activeMap = forcedMap || next.map || null
+  // Keep the asset's own texture whenever it already has one. The shared city
+  // texture is only a fallback for OBJ/GLB assets whose material has no map.
+  const activeMap = next.map || forcedMap || null
   if (activeMap) {
     activeMap.colorSpace = THREE.SRGBColorSpace
     activeMap.needsUpdate = true
   }
 
-  if (isCityAsset.value) {
+  if (isCityAsset.value && props.ghost) {
     const cityMaterial = new THREE.MeshBasicMaterial({
       map: activeMap,
       color: new THREE.Color('#ffffff'),
@@ -82,23 +84,6 @@ const cloneMaterialForDisplay = (material, forcedMap = null) => {
     if (next.map) {
       next.map.colorSpace = THREE.SRGBColorSpace
       next.map.needsUpdate = true
-    }
-    if ('metalness' in next) {
-      next.metalness = 0
-    }
-    if ('roughness' in next) {
-      next.roughness = Math.max(typeof next.roughness === 'number' ? next.roughness : 0.75, 0.82)
-    }
-    if ('color' in next && next.color?.isColor && next.color.equals(new THREE.Color(0x000000))) {
-      next.color = new THREE.Color('#ffffff')
-    }
-    if ('emissive' in next && next.emissive?.isColor) {
-      const materialColor = next.color?.isColor ? next.color : new THREE.Color('#ffffff')
-      next.emissive = materialColor.clone()
-      next.emissiveIntensity = Math.max(next.emissiveIntensity || 0, 0.1)
-    }
-    if ('flatShading' in next) {
-      next.flatShading = true
     }
     next.needsUpdate = true
     return next

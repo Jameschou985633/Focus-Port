@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
-import { computeLedgerApi, focusApi, phoneApi, taskApi } from '../api'
+import { computeLedgerApi, focusApi, friendApi, phoneApi, taskApi } from '../api'
 import { useUserStore } from '../stores/user'
 import { useFocusHubStore } from '../stores/focusHub'
 import { useDimensionStore } from '../stores/dimension'
@@ -70,6 +70,7 @@ const auditCategory = ref('娱乐')
 const auditNotes = ref('')
 const auditState = ref('idle')
 const auditMessage = ref('')
+const auditSource = ref('')
 
 const taskForm = ref({
   content: '',
@@ -113,6 +114,8 @@ const hardlinePhrases = [
   '执行高强度校验，清除薄弱节点。',
   '封装最终输出，准备跃迁验收。'
 ]
+const FRIEND_REQUEST_POLL_INTERVAL_MS = 30000
+let friendRequestPollTimer = null
 
 const toDateKey = (value = new Date()) => {
   const date = value instanceof Date ? value : new Date(value)
@@ -134,6 +137,7 @@ const normalizeDateKey = (value, fallback = todayDateKey()) => {
 
 const username = computed(() => userStore.username || 'guest')
 const mailUnread = computed(() => Math.max(0, Number(mailStore.unreadCount || 0)))
+const friendRequestCount = ref(0)
 const isFocusMode = computed(() => focusHubStore.pomodoro.isRunning)
 const computeUnits = computed(() => Math.max(0, Number(userStore.growth?.coins || 0)))
 const focusEnergy = computed(() => Math.max(0, Number(userStore.growth?.focus_energy || 0)))
@@ -383,7 +387,10 @@ const focusGoalTitle = computed(() => selectedTodoTask.value?.category || 'Today
 const focusActionTitle = computed(() => selectedTodoTask.value?.title || '请选择一个待办任务')
 const showFocusGoal = computed(() => Boolean(focusGoalTitle.value && focusGoalTitle.value !== focusActionTitle.value))
 const durationProgress = computed(() => `${((selectedDuration.value - MIN_FOCUS_MINUTES) / (MAX_FOCUS_MINUTES - MIN_FOCUS_MINUTES)) * 100}%`)
-const durationTickPosition = (minutes) => `${((minutes - MIN_FOCUS_MINUTES) / (MAX_FOCUS_MINUTES - MIN_FOCUS_MINUTES)) * 100}%`
+const durationTickPosition = (minutes) => {
+  const ratio = (minutes - MIN_FOCUS_MINUTES) / (MAX_FOCUS_MINUTES - MIN_FOCUS_MINUTES)
+  return `calc(var(--duration-pad) + (100% - var(--duration-pad-total)) * ${ratio})`
+}
 const pomodoroReadyLabel = computed(() => {
   if (selectedTaskIsDone.value) return '该任务已完成，请选择其他日程'
   if (selectedTodoTask.value) return `${selectedTodoTask.value.title} · ${selectedDuration.value} 分钟`
@@ -584,6 +591,22 @@ const goPK = () => goTo('/pk')
 const goCollab = () => goTo('/collab')
 const goSettings = () => goTo('/more')
 
+const loadFriendRequests = async () => {
+  const currentUser = String(userStore.username || '').trim()
+  if (!currentUser || currentUser === 'guest') {
+    friendRequestCount.value = 0
+    return
+  }
+  try {
+    const response = await friendApi.list(currentUser)
+    const records = response?.data?.friends || []
+    friendRequestCount.value = records.filter((friendship) => friendship.status === 'pending' && friendship.request_direction === 'incoming').length
+  } catch (error) {
+    console.error('Failed to load friend requests', error)
+    friendRequestCount.value = 0
+  }
+}
+
 const enter3DCity = () => {
   dimensionStore.setDimension('PHYSICAL')
   router.push({ path: '/island', query: { dimension: 'PHYSICAL' } })
@@ -613,7 +636,7 @@ const sidebarGroups = computed(() => [
   {
     id: 'fleet', icon: '🛰️', title: '舰队枢纽', subtitle: 'Social / Hub', children: [
       { id: 'fleet-mail', title: '星际信箱', meta: mailUnread.value ? `${mailUnread.value} 未读` : '通知站', action: goMail, badge: mailUnread.value },
-      { id: 'fleet-friends', title: '好友竞技', meta: '好友 / PK', action: goFriends },
+      { id: 'fleet-friends', title: '好友竞技', meta: '好友 / PK', action: goFriends, badge: friendRequestCount.value },
       { id: 'fleet-rank', title: '舰队排行', meta: 'Leaderboard', action: goLeaderboard },
       { id: 'fleet-collab', title: '联合星桥', meta: 'Social Timer', action: goCollab },
       { id: 'fleet-pk', title: '竞技场', meta: 'PK Challenge', action: goPK }
@@ -950,6 +973,12 @@ const normalizeAuditCategory = (category) => {
   if (/(工具|系统|浏览器|地图|支付|tool|utility)/i.test(text)) return 'tools'
   return 'entertainment'
 }
+const auditCategoryLabels = {
+  entertainment: '娱乐',
+  social: '社交',
+  tools: '工具',
+  productivity: '效率'
+}
 const normalizeAuditBreakdown = (raw = {}) => {
   const next = { entertainment: 0, social: 0, tools: 0, productivity: 0 }
   const source = raw && typeof raw === 'object' ? raw : {}
@@ -973,6 +1002,13 @@ const breakdownFromAuditResult = (result = {}) => {
   }
   return next
 }
+const deriveAuditCategory = (result = {}, breakdown = {}) => {
+  const normalized = normalizeAuditBreakdown(breakdown)
+  const dominant = Object.entries(normalized).sort((a, b) => b[1] - a[1]).find(([, minutes]) => minutes > 0)?.[0]
+  if (dominant) return auditCategoryLabels[dominant] || '娱乐'
+  const explicit = String(result.top_category || '').trim()
+  return auditCategories.includes(explicit) ? explicit : '娱乐'
+}
 const auditTotalMinutes = computed(() => Object.values(auditBreakdown.value).reduce((sum, value) => sum + clampAuditMinutes(value), 0))
 const auditWeightedMinutes = computed(() => {
   const item = normalizeAuditBreakdown(auditBreakdown.value)
@@ -994,6 +1030,7 @@ const resetAuditFlow = () => {
   auditNotes.value = ''
   auditState.value = 'idle'
   auditMessage.value = ''
+  auditSource.value = ''
 }
 
 const handleAuditFileSelect = (event) => {
@@ -1016,9 +1053,17 @@ const analyzeAuditScreenshot = async () => {
     const response = await phoneApi.analyzeScreenshot(auditSelectedFile.value, username.value)
     const result = response.data || {}
     auditResult.value = result
-    auditBreakdown.value = breakdownFromAuditResult(result)
-    auditMinutes.value = clampAuditMinutes(auditBreakdown.value.entertainment)
-    auditCategory.value = String(result.top_category || auditCategory.value || '娱乐')
+    auditSource.value = String(result.source || '')
+    const inferredBreakdown = breakdownFromAuditResult(result)
+    auditBreakdown.value = inferredBreakdown
+    auditMinutes.value = clampAuditMinutes(result.total_minutes || auditTotalMinutes.value || inferredBreakdown.entertainment)
+    auditCategory.value = deriveAuditCategory(result, inferredBreakdown)
+    if (!Object.values(inferredBreakdown).some((value) => value > 0) && !auditMinutes.value) {
+      const summary = String(result.summary || '')
+      auditMessage.value = /fetch failed|连接|网络|超时|AI 识别失败/i.test(summary)
+        ? '千问视觉服务当前连接失败，截图内容本身没有问题。请检查网络后重试，也可以先手动填写四类分钟数。'
+        : '这张图的可识别信息太少，建议上传原图完整截图后再扫一次。'
+    }
     auditState.value = 'audit'
   } catch (error) {
     console.error('phone screenshot analysis failed', error)
@@ -1064,7 +1109,11 @@ onMounted(async () => {
     selectedDateKey.value = todayDateKey()
     taskForm.value.scheduledDate = selectedDateKey.value
     loadTaskStages()
-    await Promise.all([loadAvatarProfile(), loadTodoTasks(), userStore.loadGrowth()])
+    await Promise.all([loadAvatarProfile(), loadTodoTasks(), userStore.loadGrowth(), loadFriendRequests()])
+    if (friendRequestPollTimer) window.clearInterval(friendRequestPollTimer)
+    friendRequestPollTimer = window.setInterval(() => {
+      loadFriendRequests()
+    }, FRIEND_REQUEST_POLL_INTERVAL_MS)
     syncSelectedTaskDuration()
     window.addEventListener('beforeunload', handleBeforeUnload)
   } catch (error) {
@@ -1077,7 +1126,7 @@ onMounted(async () => {
 
 watch(() => userStore.username, async () => {
   loadTaskStages()
-  await Promise.all([loadAvatarProfile(), loadTodoTasks(), userStore.loadGrowth()])
+  await Promise.all([loadAvatarProfile(), loadTodoTasks(), userStore.loadGrowth(), loadFriendRequests()])
   syncSelectedTaskDuration()
 })
 watch(anyModalOpen, (open) => { document.body.style.overflow = open ? 'hidden' : '' })
@@ -1086,6 +1135,10 @@ watch(selectedTodoTaskId, () => { syncSelectedTaskDuration() })
 watch(auditModalOpen, (open) => { if (!open) resetAuditFlow() })
 onUnmounted(() => {
   document.body.style.overflow = ''
+  if (friendRequestPollTimer) {
+    window.clearInterval(friendRequestPollTimer)
+    friendRequestPollTimer = null
+  }
   window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>
@@ -1262,8 +1315,12 @@ onUnmounted(() => {
               <div class="duration-slider" :class="{ locked: focusHubStore.pomodoro.isRunning || isStartingFocus }" :style="{ '--duration-progress': durationProgress }">
                 <div class="duration-track" aria-hidden="true" />
                 <input v-model.number="selectedDuration" type="range" :min="MIN_FOCUS_MINUTES" :max="MAX_FOCUS_MINUTES" step="1" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" aria-label="Pomodoro duration" @input="handleDurationDrag" @change="handleDurationDrag">
+                <span class="duration-thumb-proxy" :style="{ '--tick-position': durationTickPosition(selectedDuration) }" aria-hidden="true" />
                 <div class="duration-range-labels"><span>{{ MIN_FOCUS_MINUTES }} min</span><span>{{ MAX_FOCUS_MINUTES }} min</span></div>
-                <div class="duration-ticks"><button v-for="m in durationOptions" :key="m" type="button" :class="{ active: selectedDuration === m }" :style="{ '--tick-position': durationTickPosition(m) }" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" :aria-label="`选择 ${m} 分钟`" @click="handleDurationSelect(m)"><span /><b>{{ m }}</b></button></div>
+                <div class="duration-ticks">
+                  <span class="duration-guide" :style="{ '--tick-position': durationTickPosition(selectedDuration) }" aria-hidden="true" />
+                  <button v-for="m in durationOptions" :key="m" type="button" :class="{ active: selectedDuration === m }" :style="{ '--tick-position': durationTickPosition(m) }" :disabled="focusHubStore.pomodoro.isRunning || isStartingFocus" :aria-label="`选择 ${m} 分钟`" @click="handleDurationSelect(m)"><span /><b>{{ m }}</b></button>
+                </div>
               </div>
               <div class="pomodoro-summary">
                 <span>当前配置</span>
@@ -1284,14 +1341,25 @@ onUnmounted(() => {
           <div class="calendar-toolbar"><button type="button" @click="selectToday">Today</button><div><button type="button" aria-label="Previous month" @click="shiftMonth(-1)">‹</button><button type="button" aria-label="Next month" @click="shiftMonth(1)">›</button></div><button type="button" @click="openTaskModal(selectedDateKey)">+ Add New Event</button></div>
           <div class="calendar-weekdays"><span v-for="label in weekdayLabels" :key="label">{{ label }}</span></div>
           <div class="calendar-grid">
-            <div v-for="cell in calendarCells" :key="cell.dateKey" class="calendar-cell" :class="{ muted: !cell.inMonth, today: cell.isToday, selected: cell.isSelected, expanded: expandedCalendarDate === cell.dateKey }">
-              <button type="button" class="calendar-day-content" @click="selectDate(cell.dateKey)">
+            <div
+              v-for="cell in calendarCells"
+              :key="cell.dateKey"
+              class="calendar-cell"
+              :class="{ muted: !cell.inMonth, today: cell.isToday, selected: cell.isSelected, expanded: expandedCalendarDate === cell.dateKey }"
+              role="button"
+              tabindex="0"
+              :aria-label="`选择日期 ${cell.dateKey}`"
+              @click="selectDate(cell.dateKey)"
+              @keydown.enter.prevent="selectDate(cell.dateKey)"
+              @keydown.space.prevent="selectDate(cell.dateKey)"
+            >
+              <div class="calendar-day-content">
                 <span class="day-number">
                   <span>{{ cell.day }}</span>
                   <span v-if="cell.tasks.length" class="day-task-count">{{ cell.tasks.length }}项</span>
                 </span>
                 <span v-for="task in getVisibleCalendarTasks(cell)" :key="task.id" class="calendar-event" :class="{ done: task.isCompleted }" :style="{ '--event-color': task.accent }">{{ task.title }}</span>
-              </button>
+              </div>
               <button v-if="hasHiddenCalendarTasks(cell)" type="button" class="calendar-more" @click.stop="toggleCalendarTasks(cell.dateKey)">更多</button>
               <button v-else-if="expandedCalendarDate === cell.dateKey && cell.tasks.length > 3" type="button" class="calendar-more" @click.stop="toggleCalendarTasks(cell.dateKey)">收起</button>
             </div>
@@ -1348,9 +1416,13 @@ onUnmounted(() => {
           <div class="audit-layout">
             <label class="audit-upload" :class="{ ready: auditPreview }"><input type="file" accept="image/*" @change="handleAuditFileSelect"><img v-if="auditPreview" :src="auditPreview" alt="手机截图预览"><span v-else><b>上传终端截图</b><small>支持 iOS / Android 屏幕使用时间截图</small></span></label>
             <div class="audit-panel">
-              <p class="audit-copy">AI scan detected: <strong>{{ auditTotalMinutes || 0 }} total mins</strong> · 综合干扰 <strong>{{ auditWeightedMinutes }}</strong>.</p>
+              <p class="audit-copy">
+                AI scan detected: <strong>{{ auditTotalMinutes || 0 }} total mins</strong>
+                · 综合干扰 <strong>{{ auditWeightedMinutes }}</strong>
+                · <strong>{{ auditSource === 'qwen_vl' ? '千问视觉 AI 已识别' : auditSource === 'qwen_unavailable' ? '千问服务连接失败' : '未连接千问，当前为手动校正模式' }}</strong>
+              </p>
               <button type="button" class="audit-scan" :disabled="!auditSelectedFile || auditState === 'analyzing'" @click="analyzeAuditScreenshot">{{ auditState === 'analyzing' ? '扫描中...' : 'AI 扫描截图' }}</button>
-              <div v-if="auditResult" class="audit-result"><span>主要分类：{{ auditResult.top_category || auditCategory }}</span><small>{{ auditResult.summary || '请校正后确认提交。' }}</small></div>
+              <div v-if="auditResult" class="audit-result"><span>主要分类：{{ auditCategory }}</span><small>{{ auditResult.summary || '请校正后确认提交。' }}</small></div>
               <div class="audit-breakdown-grid">
                 <label v-for="item in auditBreakdownLabels" :key="item.key">
                   <span>{{ item.label }}</span>
@@ -1468,12 +1540,14 @@ button:disabled { cursor: not-allowed; }
 .duration-slider input { position: relative; z-index: 2; display: block; width: calc(100% - var(--duration-pad-total)); height: 28px; margin: 0 var(--duration-pad); appearance: none; background: transparent; cursor: pointer; }
 .duration-slider input:disabled { cursor: not-allowed; }
 .duration-slider input::-webkit-slider-runnable-track { height: 8px; border: 0; border-radius: 99px; background: transparent; }
-.duration-slider input::-webkit-slider-thumb { width: var(--duration-thumb); height: var(--duration-thumb); margin-top: -5px; appearance: none; border: 3px solid #fff; border-radius: 50%; background: var(--vision-blue); box-shadow: 0 5px 16px rgba(0,117,255,.42); }
+.duration-slider input::-webkit-slider-thumb { width: 28px; height: 28px; margin-top: -10px; appearance: none; border: 0; border-radius: 50%; background: transparent; box-shadow: none; }
 .duration-slider input::-moz-range-track { height: 8px; border: 0; border-radius: 99px; background: transparent; }
 .duration-slider input::-moz-range-progress { height: 8px; border-radius: 99px; background: transparent; }
-.duration-slider input::-moz-range-thumb { width: var(--duration-thumb); height: var(--duration-thumb); border: 3px solid #fff; border-radius: 50%; background: var(--vision-blue); box-shadow: 0 5px 16px rgba(0,117,255,.42); }
+.duration-slider input::-moz-range-thumb { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; box-shadow: none; }
+.duration-thumb-proxy { position: absolute; z-index: 3; left: var(--tick-position); top: 17px; width: var(--duration-thumb); height: var(--duration-thumb); transform: translate(-50%, -50%); border: 3px solid #fff; border-radius: 50%; background: var(--vision-blue); box-shadow: 0 5px 16px rgba(0,117,255,.42); pointer-events: none; }
 .duration-range-labels { display: flex; justify-content: space-between; margin: 2px var(--duration-pad) 0; color: var(--vision-muted); font-size: 11px; font-weight: 800; }
-.duration-ticks { position: relative; height: 30px; margin: 4px var(--duration-pad) 0; }
+.duration-ticks { position: relative; height: 36px; margin-top: 4px; }
+.duration-guide { position: absolute; left: var(--tick-position); top: -34px; width: 2px; height: 32px; transform: translateX(-50%); border-radius: 999px; background: linear-gradient(180deg, rgba(0, 117, 255, 0.08), rgba(0, 117, 255, 0.88)); box-shadow: 0 0 10px rgba(0, 117, 255, 0.28); pointer-events: none; }
 .duration-ticks button { position: absolute; left: var(--tick-position); display: grid; width: 34px; transform: translateX(-50%); justify-items: center; gap: 3px; border: 0; padding: 0; background: transparent; color: var(--vision-muted); font-size: 11px; cursor: pointer; }
 .duration-ticks button:disabled { cursor: not-allowed; }
 .duration-ticks button span { width: 6px; height: 6px; border-radius: 99px; background: rgba(255,255,255,.24); }
@@ -1586,11 +1660,14 @@ button:disabled { cursor: not-allowed; }
 .calendar-weekdays { gap: 8px; margin-bottom: 8px; }
 .calendar-weekdays span { color: var(--vision-muted); font-size: 11px; font-weight: 900; text-align: center; }
 .calendar-grid { gap: 8px; }
-.calendar-cell { min-height: 112px; border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 10px; background: rgba(255,255,255,.055); color: white; text-align: left; }
+.calendar-cell { min-height: 112px; border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 10px; background: rgba(255,255,255,.055); color: white; text-align: left; cursor: pointer; outline: none; transition: border-color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease; }
+.calendar-cell:hover { border-color: rgba(125,183,255,.62); background: rgba(72,128,255,.1); }
+.calendar-cell:focus-visible { border-color: rgba(125,183,255,.9); box-shadow: 0 0 0 3px rgba(72,128,255,.24); }
+.calendar-cell:active { transform: translateY(1px); }
 .calendar-cell.muted { opacity: .44; }
 .calendar-cell.today,.calendar-cell.selected { border-color: rgba(72,128,255,.72); background: rgba(72,128,255,.14); }
 .calendar-cell.expanded { position: relative; z-index: 1; }
-.calendar-day-content { display: block; width: 100%; border: 0; padding: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.calendar-day-content { display: block; width: 100%; min-height: 88px; color: inherit; text-align: left; pointer-events: none; }
 .day-number { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; font-weight: 900; }
 .day-task-count { flex: 0 0 auto; border-radius: 999px; background: rgba(72,128,255,.18); padding: 2px 6px; color: rgba(202,224,255,.9); font-size: 10px; font-weight: 900; }
 .calendar-event,.calendar-more { display: block; width: 100%; box-sizing: border-box; overflow: hidden; border: 0; border-left: 3px solid var(--event-color,#4880ff); border-radius: 7px; margin-top: 5px; padding: 5px 6px; background: rgba(255,255,255,.08); color: rgba(255,255,255,.82); font: inherit; font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
@@ -1674,6 +1751,7 @@ button:disabled { cursor: not-allowed; }
   .stage-row { grid-template-columns: 1fr; }
   .audit-layout,.modal-grid,.ledger-summary-grid { grid-template-columns: 1fr; }
   .calendar-cell { min-height: 82px; padding: 7px; }
+  .calendar-day-content { min-height: 66px; }
   .calendar-event,.calendar-more { display: none; }
 }
 @media (max-width: 620px) {

@@ -201,9 +201,26 @@ export const postApi = {
 
 export const greenhouseApi = {
   create: (data) => api.post('/api/greenhouse/create', data),
-  list: (isPublic = true) => api.get('/api/greenhouse/list', { params: { is_public: isPublic } }),
+  list: (isPublic = true, username = '') =>
+    api.get('/api/greenhouse/list', { params: { is_public: isPublic, username } }),
   get: (roomId) => api.get(`/api/greenhouse/${roomId}`),
+  visit: (roomId, username) =>
+    api.post('/api/greenhouse/visit', { room_id: roomId, username }),
+  delete: (roomId, username) =>
+    api.delete(`/api/greenhouse/${roomId}`, { data: { username } }),
   join: (roomId, username, password = '') => api.post(`/api/greenhouse/${roomId}/join`, { username, password }),
+  takeSeat: (roomId, username, seatIndex, password = '') =>
+    api.post('/api/greenhouse/join', { room_id: roomId, username, seat_index: seatIndex, password }),
+  leave: (roomId, username) =>
+    api.post('/api/greenhouse/leave', { room_id: roomId, username }),
+  start: (roomId, username, duration, taskId = null) =>
+    api.post('/api/greenhouse/start', { room_id: roomId, username, duration, task_id: taskId }),
+  end: (roomId, username, status) =>
+    api.post('/api/greenhouse/end', { room_id: roomId, username, status }),
+  emoji: (roomId, username, emoji) =>
+    api.post('/api/greenhouse/emoji', { room_id: roomId, username, emoji }),
+  invite: (roomId, sender, receiver) =>
+    api.post(`/api/greenhouse/${roomId}/invite`, { sender, receiver }),
   selectSeat: (roomId, username, seatNumber, taskId = null) =>
     api.post(`/api/greenhouse/${roomId}/select-seat`, {
       room_id: roomId,
@@ -269,51 +286,30 @@ export const computeLedgerApi = {
 }
 
 export const createGreenhouseWebSocket = (roomId) => {
-  const apiBase = import.meta.env.VITE_API_BASE_URL
-  const devWsBase = import.meta.env.VITE_DEV_API_TARGET
-    ? import.meta.env.VITE_DEV_API_TARGET.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
-    : 'ws://127.0.0.1:8010'
-  let wsBase
-  if (apiBase) {
-    wsBase = apiBase.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
-  } else {
-    wsBase = import.meta.env.PROD
-      ? 'wss://focusport-backend.onrender.com'
-      : devWsBase
-  }
-  return new WebSocket(`${wsBase}/ws/greenhouse/${roomId}`)
+  return new WebSocket(`${resolveWsBase()}/ws/greenhouse/${roomId}`)
 }
 
 export const createGomokuWebSocket = (gameId) => {
-  const apiBase = import.meta.env.VITE_API_BASE_URL
-  const devWsBase = import.meta.env.VITE_DEV_API_TARGET
-    ? import.meta.env.VITE_DEV_API_TARGET.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
-    : 'ws://127.0.0.1:8010'
-  let wsBase
-  if (apiBase) {
-    wsBase = apiBase.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
-  } else {
-    wsBase = import.meta.env.PROD
-      ? 'wss://focusport-backend.onrender.com'
-      : devWsBase
-  }
-  return new WebSocket(`${wsBase}/ws/gomoku/${gameId}`)
+  return new WebSocket(`${resolveWsBase()}/ws/gomoku/${gameId}`)
 }
 
 export const createArcadeWebSocket = (roomCode) => {
+  return new WebSocket(`${resolveWsBase()}/ws/arcade/${roomCode}`)
+}
+
+const resolveWsBase = () => {
   const apiBase = import.meta.env.VITE_API_BASE_URL
-  const devWsBase = import.meta.env.VITE_DEV_API_TARGET
-    ? import.meta.env.VITE_DEV_API_TARGET.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
-    : 'ws://127.0.0.1:8010'
-  let wsBase
   if (apiBase) {
-    wsBase = apiBase.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
-  } else {
-    wsBase = import.meta.env.PROD
-      ? 'wss://focusport-backend.onrender.com'
-      : devWsBase
+    return apiBase.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
   }
-  return new WebSocket(`${wsBase}/ws/arcade/${roomCode}`)
+  const devTarget = import.meta.env.VITE_DEV_API_TARGET
+  if (devTarget) {
+    return devTarget.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/^https:/, 'wss').replace(/^http:/, 'ws')
+  }
+  return 'ws://127.0.0.1:8005'
 }
 
 export const gomokuApi = {

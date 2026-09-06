@@ -36,7 +36,7 @@ COMMERCIAL_MODEL_BASE = "/city-assets/commercial/Models/GLB format"
 DEFAULT_AVATAR = "👨‍🚀"
 
 DEFAULT_QWEN_MODEL = "qwen-plus"
-QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 BLANK_LOG_FEEDBACK = "警告：未检测到有效算力日志，判定为系统休眠，收益减半。"
 FALLBACK_EVALUATION_FEEDBACK = "量子评估通道波动，本次按基础收益结算。"
 STUDY_LOG_SYSTEM_PROMPT = (
@@ -139,6 +139,13 @@ def get_env_value(*keys: str) -> str:
     return ""
 
 
+def get_qwen_base_url() -> str:
+    return (
+        get_env_value("QWEN_BASE_URL", "DASHSCOPE_BASE_URL", "VITE_QWEN_BASE_URL")
+        or DEFAULT_QWEN_BASE_URL
+    ).rstrip("/")
+
+
 def normalize_task_difficulty(value: Optional[str]) -> str:
     return "L2" if str(value or "L1").strip().upper() == "L2" else "L1"
 
@@ -237,7 +244,7 @@ def evaluate_study_log(
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key, base_url=QWEN_BASE_URL)
+        client = OpenAI(api_key=api_key, base_url=get_qwen_base_url())
         response = client.chat.completions.create(
             model=normalized_model,
             temperature=0.2,
@@ -1116,6 +1123,11 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_username TEXT NOT NULL, friend_username TEXT NOT NULL,
                 status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS Messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT NOT NULL, receiver TEXT NOT NULL,
+                title TEXT NOT NULL, content TEXT NOT NULL, category TEXT DEFAULT 'friend',
+                is_read BOOLEAN DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS Achievements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
                 description TEXT DEFAULT '', category TEXT DEFAULT 'general', icon TEXT DEFAULT '🏆', exp_reward INTEGER DEFAULT 0
@@ -1167,6 +1179,11 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL, seat_number INTEGER NOT NULL,
                 position_x REAL DEFAULT 0, position_z REAL DEFAULT 0, rotation_y REAL DEFAULT 0,
                 is_occupied BOOLEAN DEFAULT 0, current_user TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS Greenhouse_Members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL, username TEXT NOT NULL,
+                first_entered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, last_entered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(room_id, username)
             );
             CREATE TABLE IF NOT EXISTS Greenhouse_Sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL, username TEXT NOT NULL,
@@ -1482,6 +1499,14 @@ class FriendRespondPayload(BaseModel):
 class FriendDeletePayload(BaseModel):
     user_username: str
     friend_username: str
+
+
+class MessageSendPayload(BaseModel):
+    sender: str
+    receiver: str
+    title: str
+    content: str
+    category: str = "friend"
 
 
 class AvatarPayload(BaseModel):
@@ -2166,6 +2191,15 @@ class GreenhouseJoinPayload(BaseModel):
     seat_index: Optional[int] = None
 
 
+class GreenhouseVisitPayload(BaseModel):
+    room_id: int
+    username: str = "guest"
+
+
+class GreenhouseDeletePayload(BaseModel):
+    username: str = "guest"
+
+
 class GreenhouseLeavePayload(BaseModel):
     room_id: int
     username: str = "guest"
@@ -2176,6 +2210,11 @@ class GreenhouseStartPayload(BaseModel):
     username: str = "guest"
     duration: int = Field(default=25, ge=1, le=240)
     task_id: Optional[int] = None
+
+
+class GreenhouseInvitePayload(BaseModel):
+    sender: str
+    receiver: str
 
 
 # ===== 圈子功能 =====
@@ -2286,7 +2325,7 @@ def generate_ai_reply(conn: sqlite3.Connection, username: str, message: str) -> 
         try:
             from openai import OpenAI
 
-            client = OpenAI(api_key=api_key, base_url=QWEN_BASE_URL)
+            client = OpenAI(api_key=api_key, base_url=get_qwen_base_url())
             response = client.chat.completions.create(
                 model=get_env_value("QWEN_CHAT_MODEL", "VITE_QWEN_MODEL") or DEFAULT_QWEN_MODEL,
                 temperature=0.7,
@@ -2537,6 +2576,44 @@ def cleanup_greenhouse_sessions(conn: sqlite3.Connection, room_id: Optional[int]
         add_exp(conn, row["username"], max(10, int(row["duration_minutes"] or 0) // 2), "greenhouse_complete")
 
 
+def leave_user_from_other_greenhouses(
+    conn: sqlite3.Connection,
+    username: str,
+    current_room_id: int,
+) -> list[int]:
+    """Keep one user active in at most one greenhouse at a time."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT room_id
+        FROM Greenhouse_Seats
+        WHERE current_user = ? AND room_id <> ?
+        UNION
+        SELECT DISTINCT room_id
+        FROM Greenhouse_Sessions
+        WHERE username = ? AND room_id <> ? AND status = 'growing'
+        """,
+        (username, current_room_id, username, current_room_id),
+    ).fetchall()
+    affected_room_ids = [int(row["room_id"]) for row in rows]
+    conn.execute(
+        """
+        UPDATE Greenhouse_Seats
+        SET is_occupied = 0, current_user = ''
+        WHERE current_user = ? AND room_id <> ?
+        """,
+        (username, current_room_id),
+    )
+    conn.execute(
+        """
+        UPDATE Greenhouse_Sessions
+        SET status = 'failed', end_time = CURRENT_TIMESTAMP
+        WHERE username = ? AND room_id <> ? AND status = 'growing'
+        """,
+        (username, current_room_id),
+    )
+    return affected_room_ids
+
+
 def greenhouse_snapshot(conn: sqlite3.Connection, room_id: int) -> dict[str, Any]:
     cleanup_greenhouse_sessions(conn, room_id)
     room = conn.execute("SELECT * FROM Greenhouses WHERE id = ?", (room_id,)).fetchone()
@@ -2545,12 +2622,18 @@ def greenhouse_snapshot(conn: sqlite3.Connection, room_id: int) -> dict[str, Any
     ensure_greenhouse_seats(conn, room_id, int(room["max_seats"] or 4))
     seats = []
     for row in conn.execute("SELECT id, seat_number, is_occupied, current_user, position_x, position_z, rotation_y FROM Greenhouse_Seats WHERE room_id = ? ORDER BY seat_number", (room_id,)):
+        profile = conn.execute(
+            "SELECT username, avatar, nickname FROM Users WHERE username = ?",
+            (row["current_user"],),
+        ).fetchone() if row["current_user"] else None
         seats.append(
             {
                 "id": row["id"],
                 "seat_number": row["seat_number"],
                 "seat_index": int(row["seat_number"]) - 1,
                 "username": row["current_user"] or "",
+                "nickname": (profile["nickname"] or profile["username"]) if profile else "",
+                "avatar": (profile["avatar"] or "👨‍🚀") if profile else "👨‍🚀",
                 "is_occupied": bool(row["is_occupied"]),
                 "position_x": row["position_x"],
                 "position_z": row["position_z"],
@@ -2565,7 +2648,14 @@ def greenhouse_snapshot(conn: sqlite3.Connection, room_id: int) -> dict[str, Any
         except ValueError:
             start_time = datetime.utcnow()
         remaining_seconds = max(int(row["duration_minutes"] or 0) * 60 - int((datetime.utcnow() - start_time).total_seconds()), 0)
-        growing_users.append({"session_id": row["id"], "username": row["username"], "duration": int(row["duration_minutes"] or 0), "remaining_seconds": remaining_seconds, "seat_id": row["seat_id"]})
+        growing_users.append({
+            "session_id": row["id"],
+            "username": row["username"],
+            "duration": int(row["duration_minutes"] or 0),
+            "remaining_seconds": remaining_seconds,
+            "started_at": str(row["start_time"] or ""),
+            "seat_id": row["seat_id"],
+        })
     occupied = sum(1 for seat in seats if seat["is_occupied"])
     return {"greenhouse": {**dict(room), "current_users": occupied}, "seats": seats, "growing_users": growing_users}
 
@@ -2578,7 +2668,12 @@ async def broadcast_greenhouse_sync(room_id: int) -> None:
 
 @app.get("/api/health")
 def api_health() -> dict[str, Any]:
-    return {"ok": True}
+    vision_model = get_env_value("QWEN_VISION_MODEL", "VITE_QWEN_VISION_MODEL") or "qwen-vl-plus"
+    return {
+        "ok": True,
+        "vision_configured": bool(get_env_value("QWEN_API_KEY", "DASHSCOPE_API_KEY", "VITE_QWEN_API_KEY")),
+        "vision_model": vision_model,
+    }
 
 
 @app.post("/api/register")
@@ -2735,6 +2830,14 @@ def normalize_phone_usage_category(raw_category: Any) -> str:
     return "entertainment"
 
 
+PHONE_USAGE_CATEGORY_LABELS = {
+    "entertainment": "娱乐",
+    "social": "社交",
+    "tools": "工具",
+    "productivity": "效率",
+}
+
+
 def normalize_phone_usage_breakdown(raw: Any, fallback_entertainment: int = 0) -> dict[str, int]:
     source = raw if isinstance(raw, dict) else {}
     aliases = {
@@ -2754,6 +2857,15 @@ def normalize_phone_usage_breakdown(raw: Any, fallback_entertainment: int = 0) -
     if not any(breakdown.values()) and fallback_entertainment:
         breakdown["entertainment"] = parse_usage_minutes(fallback_entertainment)
     return breakdown
+
+
+def phone_usage_dominant_category(breakdown: dict[str, int]) -> str:
+    normalized = normalize_phone_usage_breakdown(breakdown)
+    dominant_key = max(normalized, key=lambda key: normalized.get(key, 0))
+    dominant_minutes = normalized.get(dominant_key, 0)
+    if dominant_minutes <= 0:
+        return ""
+    return PHONE_USAGE_CATEGORY_LABELS.get(dominant_key, "娱乐")
 
 
 def phone_usage_weighted_minutes(breakdown: dict[str, int], fallback_minutes: int) -> int:
@@ -2794,6 +2906,12 @@ def parse_phone_usage_ai_payload(raw_text: str) -> dict[str, Any]:
     if entertainment_minutes > category_breakdown["entertainment"]:
         category_breakdown["entertainment"] = entertainment_minutes
     total_minutes = parse_usage_minutes(parsed.get("total_minutes") or sum(category_breakdown.values()) or entertainment_minutes)
+    dominant_category = phone_usage_dominant_category(category_breakdown)
+    top_category = str(parsed.get("top_category") or "").strip()
+    if dominant_category:
+        top_category = dominant_category
+    elif not top_category:
+        top_category = "娱乐"
     weighted_minutes = phone_usage_weighted_minutes(category_breakdown, entertainment_minutes)
     return {
         "total_minutes": total_minutes,
@@ -2803,7 +2921,7 @@ def parse_phone_usage_ai_payload(raw_text: str) -> dict[str, Any]:
         "productivity_minutes": category_breakdown["productivity"],
         "weighted_minutes": weighted_minutes,
         "category_breakdown": category_breakdown,
-        "top_category": str(parsed.get("top_category") or "娱乐")[:20],
+        "top_category": top_category[:20],
         "apps": normalized_apps,
         "summary": str(parsed.get("summary") or "已识别屏幕使用时长。")[:240],
     }
@@ -3055,7 +3173,7 @@ async def analyze_phone_screenshot(file: UploadFile = File(...), username: str =
             from openai import OpenAI
 
             image_data_url = f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-            client = OpenAI(api_key=api_key, base_url=QWEN_BASE_URL)
+            client = OpenAI(api_key=api_key, base_url=get_qwen_base_url())
             response = client.chat.completions.create(
                 model=get_env_value("QWEN_VISION_MODEL", "VITE_QWEN_VISION_MODEL") or "qwen-vl-plus",
                 temperature=0.1,
@@ -3068,6 +3186,7 @@ async def analyze_phone_screenshot(file: UploadFile = File(...), username: str =
                             "评分目标是高效率、低娱乐、低社交。"
                             "如果截图包含分类汇总，例如“社交 7小时21分钟、娱乐 2小时40分钟、工具 32分钟”，"
                             "必须优先读取这些分类汇总，不要只读取柱状图或日均。"
+                            "请尽量给出四类分钟数，不要只返回主分类名；主分类应以分钟数最高的分类为准。"
                         ),
                     },
                     {
@@ -3259,6 +3378,100 @@ def ai_suggestions(username: str) -> dict[str, Any]:
     return {"success": True, "suggestions": ["帮我安排今晚 90 分钟学习节奏", "根据最近状态给我一份提分建议", "我容易分心，给我一个 25 分钟执行清单"]}
 
 
+@app.get("/api/messages/{username}/unread")
+def unread_messages(username: str) -> dict[str, Any]:
+    with closing(get_conn()) as conn:
+        unread = conn.execute(
+            "SELECT COUNT(*) AS count FROM Messages WHERE receiver = ? AND is_read = 0",
+            (username,),
+        ).fetchone()["count"]
+    return {"success": True, "unread": int(unread or 0)}
+
+
+@app.get("/api/messages/{username}")
+def list_messages(username: str, category: str = "") -> dict[str, Any]:
+    query = """
+        SELECT id, sender, receiver, title, content, category,
+               CASE WHEN sender = ? THEN 1 ELSE is_read END AS is_read,
+               created_at
+        FROM Messages
+        WHERE (sender = ? OR receiver = ?)
+    """
+    params: list[Any] = [username, username, username]
+    if category:
+        query += " AND category = ?"
+        params.append(category)
+    query += " ORDER BY id DESC"
+    with closing(get_conn()) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return {"success": True, "messages": [dict(row) for row in rows]}
+
+
+@app.post("/api/messages")
+def send_message(payload: MessageSendPayload) -> dict[str, Any]:
+    sender = payload.sender.strip()
+    receiver = payload.receiver.strip()
+    title = payload.title.strip()
+    content = payload.content.strip()
+    category = payload.category.strip() or "friend"
+    if not sender or not receiver or not title or not content:
+        raise HTTPException(status_code=400, detail="消息信息不完整")
+
+    with closing(get_conn()) as conn:
+        ensure_user(conn, sender)
+        if not conn.execute("SELECT username FROM Users WHERE username = ?", (receiver,)).fetchone():
+            raise HTTPException(status_code=404, detail="收件人不存在")
+        cursor = conn.execute(
+            """
+            INSERT INTO Messages (sender, receiver, title, content, category, is_read)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (sender, receiver, title, content, category),
+        )
+        message_id = cursor.lastrowid
+        conn.commit()
+    return {
+        "success": True,
+        "message": {
+            "id": message_id,
+            "sender": sender,
+            "receiver": receiver,
+            "title": title,
+            "content": content,
+            "category": category,
+            "is_read": False,
+        },
+    }
+
+
+@app.post("/api/messages/{message_id}/read")
+def mark_message_read(message_id: int) -> dict[str, Any]:
+    with closing(get_conn()) as conn:
+        cursor = conn.execute("UPDATE Messages SET is_read = 1 WHERE id = ?", (message_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="消息不存在")
+        conn.commit()
+    return {"success": True}
+
+
+@app.post("/api/messages/read-all/{username}")
+def mark_all_messages_read(username: str) -> dict[str, Any]:
+    with closing(get_conn()) as conn:
+        conn.execute("UPDATE Messages SET is_read = 1 WHERE receiver = ?", (username,))
+        conn.commit()
+    return {"success": True}
+
+
+@app.delete("/api/messages/{message_id}")
+def delete_message(message_id: int) -> dict[str, Any]:
+    with closing(get_conn()) as conn:
+        cursor = conn.execute("DELETE FROM Messages WHERE id = ?", (message_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="消息不存在")
+        conn.commit()
+    return {"success": True}
+
+
 @app.get("/api/friends/{username}")
 def list_friends(username: str) -> dict[str, Any]:
     with closing(get_conn()) as conn:
@@ -3288,10 +3501,13 @@ def request_friend(payload: FriendRequestPayload) -> dict[str, Any]:
         ensure_user(conn, payload.user_username)
         if not conn.execute("SELECT username FROM Users WHERE username = ?", (payload.friend_username,)).fetchone():
             raise HTTPException(status_code=404, detail="目标用户不存在")
-        exists = conn.execute("SELECT id FROM Friendships WHERE (user_username = ? AND friend_username = ?) OR (user_username = ? AND friend_username = ?)", (payload.user_username, payload.friend_username, payload.friend_username, payload.user_username)).fetchone()
-        if exists:
+        exists = conn.execute("SELECT id, status FROM Friendships WHERE (user_username = ? AND friend_username = ?) OR (user_username = ? AND friend_username = ?)", (payload.user_username, payload.friend_username, payload.friend_username, payload.user_username)).fetchone()
+        if exists and exists["status"] in {"pending", "accepted"}:
             raise HTTPException(status_code=400, detail="好友关系已存在")
-        conn.execute("INSERT INTO Friendships (user_username, friend_username, status) VALUES (?, ?, 'pending')", (payload.user_username, payload.friend_username))
+        if exists:
+            conn.execute("UPDATE Friendships SET user_username = ?, friend_username = ?, status = 'pending', created_at = CURRENT_TIMESTAMP WHERE id = ?", (payload.user_username, payload.friend_username, exists["id"]))
+        else:
+            conn.execute("INSERT INTO Friendships (user_username, friend_username, status) VALUES (?, ?, 'pending')", (payload.user_username, payload.friend_username))
         conn.commit()
     return {"success": True}
 
@@ -3786,16 +4002,28 @@ def unified_shop_remove_placed(placed_id: int, payload: RemovePlacedPayload = Bo
 
 
 @app.get("/api/greenhouse/list")
-def list_greenhouses(is_public: bool = True) -> dict[str, Any]:
+def list_greenhouses(is_public: bool = True, username: str = "") -> dict[str, Any]:
     with closing(get_conn()) as conn:
         rows = conn.execute(
             """
             SELECT g.*, (SELECT COUNT(*) FROM Greenhouse_Seats s WHERE s.room_id = g.id AND s.is_occupied = 1) AS current_users
             FROM Greenhouses g
-            WHERE (? = 0) OR g.is_public = 1
+            WHERE (
+                (? = '' AND ((? = 0) OR g.is_public = 1))
+                OR (
+                    ? <> ''
+                    AND (
+                        g.owner_username = ?
+                        OR EXISTS (
+                            SELECT 1 FROM Greenhouse_Members m
+                            WHERE m.room_id = g.id AND m.username = ?
+                        )
+                    )
+                )
+            )
             ORDER BY g.id DESC
             """,
-            (1 if is_public else 0,),
+            (username.strip(), 1 if is_public else 0, username.strip(), username.strip(), username.strip()),
         ).fetchall()
     return {"success": True, "greenhouses": [dict(row) for row in rows]}
 
@@ -3814,8 +4042,43 @@ def create_greenhouse(payload: GreenhouseCreatePayload) -> dict[str, Any]:
         room_code = secrets.token_hex(4).upper()
         cursor = conn.execute("INSERT INTO Greenhouses (room_code, name, description, owner_username, max_seats, is_public, password, theme) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (room_code, payload.name.strip(), payload.description.strip(), payload.owner_username, payload.max_seats, 1 if payload.is_public else 0, payload.password, payload.theme))
         ensure_greenhouse_seats(conn, cursor.lastrowid, payload.max_seats)
+        conn.execute(
+            "INSERT OR IGNORE INTO Greenhouse_Members (room_id, username) VALUES (?, ?)",
+            (cursor.lastrowid, payload.owner_username),
+        )
         conn.commit()
     return {"success": True, "room_id": cursor.lastrowid}
+
+
+@app.delete("/api/greenhouse/{room_id}")
+async def delete_greenhouse(room_id: int, payload: GreenhouseDeletePayload) -> dict[str, Any]:
+    username = payload.username.strip()
+    with closing(get_conn()) as conn:
+        room = conn.execute(
+            "SELECT id, owner_username FROM Greenhouses WHERE id = ?",
+            (room_id,),
+        ).fetchone()
+        if not room:
+            raise HTTPException(status_code=404, detail="协作舱不存在")
+        if room["owner_username"] != username:
+            raise HTTPException(status_code=403, detail="只有协作舱创建者可以删除")
+
+        conn.execute("DELETE FROM Greenhouse_Sessions WHERE room_id = ?", (room_id,))
+        conn.execute("DELETE FROM Greenhouse_Seats WHERE room_id = ?", (room_id,))
+        conn.execute("DELETE FROM Greenhouse_Members WHERE room_id = ?", (room_id,))
+        conn.execute(
+            """
+            DELETE FROM Messages
+            WHERE category = 'collab'
+              AND (content LIKE ? OR content LIKE ?)
+            """,
+            (f'%"room_id":{room_id}%', f'%"room_id": {room_id}%'),
+        )
+        conn.execute("DELETE FROM Greenhouses WHERE id = ?", (room_id,))
+        conn.commit()
+
+    await socket_manager.broadcast(room_id, {"type": "room_deleted"})
+    return {"success": True, "room_id": room_id}
 
 
 @app.get("/api/greenhouse/sunshine/{username}")
@@ -3852,15 +4115,15 @@ def compute_ledger(username: str, limit: int = 80) -> dict[str, Any]:
 
 
 @app.post("/api/greenhouse/{room_id}/join")
-def join_greenhouse_path(room_id: int, payload: GreenhouseJoinPayload) -> dict[str, Any]:
+async def join_greenhouse_path(room_id: int, payload: GreenhouseJoinPayload) -> dict[str, Any]:
     payload.room_id = room_id
     if payload.seat_index is None:
         payload.seat_index = 0
-    return join_greenhouse(payload)
+    return await join_greenhouse(payload)
 
 
 @app.post("/api/greenhouse/join")
-def join_greenhouse(payload: GreenhouseJoinPayload) -> dict[str, Any]:
+async def join_greenhouse(payload: GreenhouseJoinPayload) -> dict[str, Any]:
     if payload.room_id is None:
         raise HTTPException(status_code=400, detail="缺少房间编号")
     if payload.seat_index is None:
@@ -3878,11 +4141,45 @@ def join_greenhouse(payload: GreenhouseJoinPayload) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="座位不存在")
         if seat["is_occupied"] and seat["current_user"] != payload.username:
             raise HTTPException(status_code=400, detail="该座位已被占用")
+        affected_room_ids = leave_user_from_other_greenhouses(conn, payload.username, payload.room_id)
         conn.execute("UPDATE Greenhouse_Seats SET is_occupied = 0, current_user = '' WHERE room_id = ? AND current_user = ?", (payload.room_id, payload.username))
         conn.execute("UPDATE Greenhouse_Seats SET is_occupied = 1, current_user = ? WHERE id = ?", (payload.username, seat["id"]))
+        conn.execute(
+            """
+            INSERT INTO Greenhouse_Members (room_id, username)
+            VALUES (?, ?)
+            ON CONFLICT(room_id, username) DO UPDATE SET last_entered_at = CURRENT_TIMESTAMP
+            """,
+            (payload.room_id, payload.username),
+        )
         conn.commit()
         snapshot = greenhouse_snapshot(conn, payload.room_id)
+    for affected_room_id in affected_room_ids:
+        await broadcast_greenhouse_sync(affected_room_id)
+    await broadcast_greenhouse_sync(payload.room_id)
     return {"success": True, **snapshot}
+
+
+@app.post("/api/greenhouse/visit")
+async def visit_greenhouse(payload: GreenhouseVisitPayload) -> dict[str, Any]:
+    with closing(get_conn()) as conn:
+        room = conn.execute("SELECT id FROM Greenhouses WHERE id = ?", (payload.room_id,)).fetchone()
+        if not room:
+            raise HTTPException(status_code=404, detail="房间不存在")
+        ensure_user(conn, payload.username)
+        affected_room_ids = leave_user_from_other_greenhouses(conn, payload.username, payload.room_id)
+        conn.execute(
+            """
+            INSERT INTO Greenhouse_Members (room_id, username)
+            VALUES (?, ?)
+            ON CONFLICT(room_id, username) DO UPDATE SET last_entered_at = CURRENT_TIMESTAMP
+            """,
+            (payload.room_id, payload.username),
+        )
+        conn.commit()
+    for affected_room_id in affected_room_ids:
+        await broadcast_greenhouse_sync(affected_room_id)
+    return {"success": True}
 
 
 @app.post("/api/greenhouse/leave")
@@ -3934,6 +4231,59 @@ async def end_greenhouse(payload: GreenhouseEndPayload) -> dict[str, Any]:
 async def greenhouse_emoji(payload: GreenhouseEmojiPayload) -> dict[str, Any]:
     await socket_manager.broadcast(payload.room_id, {"type": "emoji", "emoji": payload.emoji, "username": payload.username})
     return {"success": True}
+
+
+@app.post("/api/greenhouse/{room_id}/invite")
+def invite_greenhouse(room_id: int, payload: GreenhouseInvitePayload) -> dict[str, Any]:
+    sender = payload.sender.strip()
+    receiver = payload.receiver.strip()
+    if not sender or not receiver:
+        raise HTTPException(status_code=400, detail="邀请信息不完整")
+    if sender == receiver:
+        raise HTTPException(status_code=400, detail="不能邀请自己")
+
+    with closing(get_conn()) as conn:
+        room = conn.execute("SELECT id, name, room_code FROM Greenhouses WHERE id = ?", (room_id,)).fetchone()
+        if not room:
+            raise HTTPException(status_code=404, detail="房间不存在")
+        if not conn.execute("SELECT username FROM Users WHERE username = ?", (receiver,)).fetchone():
+            raise HTTPException(status_code=404, detail="收件人不存在")
+        friends = get_friends_usernames(conn, sender)
+        if receiver not in friends:
+            raise HTTPException(status_code=403, detail="只能邀请好友加入协作舱")
+
+        content = json.dumps(
+            {
+                "room_id": room_id,
+                "room_name": room["name"],
+                "room_code": room["room_code"],
+                "inviter": sender,
+                "message": f"{sender} 邀请你加入协作舱「{room['name']}」",
+            },
+            ensure_ascii=False,
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO Messages (sender, receiver, title, content, category, is_read)
+            VALUES (?, ?, ?, ?, 'collab', 0)
+            """,
+            (sender, receiver, "协作舱邀请", content),
+        )
+        message_id = cursor.lastrowid
+        conn.commit()
+
+    return {
+        "success": True,
+        "message": {
+            "id": message_id,
+            "sender": sender,
+            "receiver": receiver,
+            "title": "协作舱邀请",
+            "content": content,
+            "category": "collab",
+            "is_read": False,
+        },
+    }
 
 
 # ===== 圈子功能 API =====

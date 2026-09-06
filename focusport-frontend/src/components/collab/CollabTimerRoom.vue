@@ -8,6 +8,7 @@ import SpacePanel from '../base/SpacePanel.vue'
 import BackButton from '../base/BackButton.vue'
 import { WORLD_NAMES } from '../../constants/worldNames'
 import { useUserStore } from '../../stores/user'
+import { createGreenhouseWebSocket, friendApi, greenhouseApi } from '../../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,10 +38,16 @@ const completedDuration = ref(0)
 const myTasks = ref([])
 const selectedTaskId = ref(null)
 const showTaskSelector = ref(false)
+const friends = ref([])
+const showInvitePanel = ref(false)
+const inviteSending = ref(false)
+const inviteHint = ref('')
 
 // WebSocket
 const ws = ref(null)
 const isConnected = ref(false)
+const sharedClock = ref(Date.now())
+const sharedClockTimer = ref(null)
 
 // 表情
 const emojis = ref([])
@@ -57,6 +64,7 @@ const toastReward = ref(0)
 // WebSocket 重连
 const wsActive = ref(true)
 const reconnectAttempts = ref(0)
+const reconnectTimer = ref(null)
 
 const focusExitSlogans = [
   '再坚持一下，真正的进步往往发生在想放弃之后。',
@@ -98,13 +106,52 @@ const themeAccent = computed(() => {
   return themeAccents[theme] || themeAccents.space
 })
 
+const occupiedSeats = computed(() => seats.value.filter((seat) => seat?.is_occupied && seat.username))
+const memberCountLabel = computed(() => `${occupiedSeats.value.length}/${room.value?.max_seats || 0} 人已入座`)
+
+const seatDisplayName = (seat) => seat?.nickname || seat?.username || '空座-无人'
+const seatAvatar = (seat) => seat?.avatar || '👨‍🚀'
+const isImageAvatar = (avatar) => /^(https?:\/\/|data:image\/)/i.test(String(avatar || ''))
+
+const normalizeGrowingUsers = (users) => (
+  (Array.isArray(users) ? users : [])
+    .filter((item) => item?.username)
+    .map((item) => ({
+      ...item,
+      duration: Number(item.duration || item.duration_minutes || 25),
+      started_at: item.started_at || item.start_time || '',
+      remaining_seconds: Number(item.remaining_seconds || 0)
+    }))
+)
+
 // 加载房间数据
 const loadRoom = async () => {
   try {
-    const res = await axios.get(`/api/greenhouse/${roomId.value}`)
-    room.value = res.data.greenhouse
-    seats.value = res.data.seats
-    growingUsers.value = res.data.growing_users
+    await greenhouseApi.visit(roomId.value, currentUsername.value)
+    const res = await greenhouseApi.get(roomId.value)
+    room.value = res.data.room || res.data.greenhouse || res.data
+    seats.value = res.data.seats || room.value?.seats || []
+    growingUsers.value = normalizeGrowingUsers(res.data.growing_users)
+
+    // 房主进入自己的协作舱时自动入座，人数统计与实际状态保持一致。
+    if (room.value?.owner_username === currentUsername.value) {
+      const currentSeat = seats.value.find((seat) => seat.is_occupied && seat.username === currentUsername.value)
+      if (currentSeat) {
+        mySeat.value = currentSeat.seat_index
+      } else {
+        const firstEmptySeat = seats.value.find((seat) => !seat.is_occupied)
+        if (firstEmptySeat) {
+          const seatRes = await greenhouseApi.takeSeat(roomId.value, currentUsername.value, firstEmptySeat.seat_index)
+          if (seatRes.data.success) {
+            mySeat.value = firstEmptySeat.seat_index
+            seats.value = seatRes.data.seats || seats.value
+          }
+        }
+      }
+    } else {
+      const currentSeat = seats.value.find((seat) => seat.is_occupied && seat.username === currentUsername.value)
+      mySeat.value = currentSeat?.seat_index ?? null
+    }
     isLoading.value = false
   } catch (err) {
     console.error('加载房间失败:', err)
@@ -116,7 +163,7 @@ const loadRoom = async () => {
 // 加载用户阳光
 const loadSunshine = async () => {
   try {
-    const res = await axios.get(`/api/greenhouse/sunshine/${currentUsername.value}`)
+    const res = await greenhouseApi.getSunshine(currentUsername.value)
     userDiamonds.value = res.data.sunshine || 0
   } catch (err) {
     console.error('加载阳光失败:', err)
@@ -133,13 +180,24 @@ const loadTasks = async () => {
   }
 }
 
+const loadFriends = async () => {
+  try {
+    const res = await friendApi.list(currentUsername.value)
+    friends.value = (res.data.friends || []).filter((friend) => friend.status === 'accepted')
+  } catch (err) {
+    console.error('加载好友失败:', err)
+  }
+}
+
 // 连接 WebSocket
 const connectWebSocket = () => {
   if (!wsActive.value) return
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/ws/greenhouse/${roomId.value}`
-
-  ws.value = new WebSocket(wsUrl)
+  if (ws.value && [WebSocket.OPEN, WebSocket.CONNECTING].includes(ws.value.readyState)) return
+  if (reconnectTimer.value) {
+    clearTimeout(reconnectTimer.value)
+    reconnectTimer.value = null
+  }
+  ws.value = createGreenhouseWebSocket(roomId.value)
 
   ws.value.onopen = () => {
     isConnected.value = true
@@ -159,15 +217,23 @@ const connectWebSocket = () => {
     isConnected.value = false
     if (!wsActive.value) return
     reconnectAttempts.value++
-    if (reconnectAttempts.value < 10) {
-      setTimeout(connectWebSocket, 5000)
-    }
+    const delay = Math.min(15000, 1500 * Math.max(1, reconnectAttempts.value))
+    reconnectTimer.value = setTimeout(connectWebSocket, delay)
+  }
+
+  ws.value.onerror = () => {
+    isConnected.value = false
   }
 }
 
 // 处理 WebSocket 消息
 const handleWebSocketMessage = (data) => {
   switch (data.type) {
+    case 'room_deleted':
+      wsActive.value = false
+      alert('该协作舱已被创建者删除。')
+      router.push('/collab')
+      break
     case 'user_joined':
       seats.value = data.seats
       break
@@ -175,14 +241,14 @@ const handleWebSocketMessage = (data) => {
       seats.value = data.seats
       break
     case 'grow_started':
-      growingUsers.value = data.growing_users
+      growingUsers.value = normalizeGrowingUsers(data.growing_users)
       if (data.username === currentUsername.value) {
         isGrowing.value = true
         startTime.value = Date.now()
       }
       break
     case 'grow_ended':
-      growingUsers.value = data.growing_users
+      growingUsers.value = normalizeGrowingUsers(data.growing_users)
       if (data.username === currentUsername.value) {
         isGrowing.value = false
         if (data.status === 'completed') {
@@ -195,7 +261,7 @@ const handleWebSocketMessage = (data) => {
       break
     case 'sync':
       seats.value = data.seats
-      growingUsers.value = data.growing_users
+      growingUsers.value = normalizeGrowingUsers(data.growing_users)
       break
   }
 }
@@ -212,12 +278,7 @@ const showEmoji = (emoji, username) => {
 // 入座
 const takeSeat = async (seatIndex) => {
   try {
-    const res = await axios.post('/api/greenhouse/join', {
-      room_id: roomId.value,
-      username: currentUsername.value,
-      seat_index: seatIndex,
-      password: ''
-    })
+    const res = await greenhouseApi.takeSeat(roomId.value, currentUsername.value, seatIndex)
     if (res.data.success) {
       mySeat.value = seatIndex
       seats.value = res.data.seats
@@ -235,10 +296,7 @@ const leaveSeat = async () => {
   }
 
   try {
-    await axios.post('/api/greenhouse/leave', {
-      room_id: roomId.value,
-      username: currentUsername.value
-    })
+    await greenhouseApi.leave(roomId.value, currentUsername.value)
     mySeat.value = null
     loadRoom()
     return true
@@ -251,12 +309,7 @@ const leaveSeat = async () => {
 // 开始专注
 const startGrow = async () => {
   try {
-    const res = await axios.post('/api/greenhouse/start', {
-      room_id: roomId.value,
-      username: currentUsername.value,
-      duration: selectedDuration.value,
-      task_id: selectedTaskId.value
-    })
+    const res = await greenhouseApi.start(roomId.value, currentUsername.value, selectedDuration.value, selectedTaskId.value)
     if (res.data.success) {
       isGrowing.value = true
       startTime.value = Date.now()
@@ -288,11 +341,7 @@ const endGrow = async (status) => {
   }
 
   try {
-    const res = await axios.post('/api/greenhouse/end', {
-      room_id: roomId.value,
-      username: currentUsername.value,
-      status: status
-    })
+    const res = await greenhouseApi.end(roomId.value, currentUsername.value, status)
     isGrowing.value = false
     if (status === 'completed' && res.data.diamonds_earned) {
       userDiamonds.value += res.data.diamonds_earned
@@ -315,11 +364,7 @@ const giveUpGrow = async () => {
 // 发送表情
 const sendEmoji = async (emoji) => {
   try {
-    await axios.post('/api/greenhouse/emoji', {
-      room_id: roomId.value,
-      username: currentUsername.value,
-      emoji: emoji
-    })
+    await greenhouseApi.emoji(roomId.value, currentUsername.value, emoji)
     showEmoji(emoji, currentUsername.value)
   } catch (err) {
     console.error('发送表情失败:', err)
@@ -335,13 +380,32 @@ const formatTime = (seconds) => {
 
 // 获取座位状态
 const getSeatUser = (index) => {
-  return seats.value.find(s => s.seat_index === index)
+  return seats.value.find(s => s.seat_index === index && s.is_occupied && s.username)
 }
 
 // 获取专注用户信息
 const getGrowingInfo = (username) => {
   return growingUsers.value.find(g => g.username === username)
 }
+
+const getGrowingSeconds = (username) => {
+  if (username === currentUsername.value && isGrowing.value) return growProgress.value
+  const info = getGrowingInfo(username)
+  if (!info) return 0
+  const startedAt = info.started_at || info.start_time
+  if (!startedAt) return Number(info.remaining_seconds || 0)
+  const startedTimestamp = new Date(String(startedAt).replace(' ', 'T')).getTime()
+  if (!Number.isFinite(startedTimestamp)) return Number(info.remaining_seconds || 0)
+  return Math.max(0, Number(info.duration || 0) * 60 - Math.floor((sharedClock.value - startedTimestamp) / 1000))
+}
+
+const isSeatGrowing = (username) => (
+  Boolean(getGrowingInfo(username) || (username === currentUsername.value && isGrowing.value))
+)
+
+const getGrowingDuration = (username) => (
+  getGrowingInfo(username)?.duration || (username === currentUsername.value ? selectedDuration.value : 25)
+)
 
 // 退出房间
 const exitRoom = async () => {
@@ -361,14 +425,34 @@ const reloadAccountState = async () => {
   isGrowing.value = false
   growProgress.value = 0
   selectedTaskId.value = null
+  showInvitePanel.value = false
+  inviteHint.value = ''
   if (growTimer.value) clearInterval(growTimer.value)
-  await Promise.all([loadRoom(), loadSunshine(), loadTasks()])
+  await Promise.all([loadRoom(), loadSunshine(), loadTasks(), loadFriends()])
 }
 
-onMounted(() => {
-  loadRoom()
-  loadSunshine()
-  loadTasks()
+const sendInvite = async (friendUsername) => {
+  inviteSending.value = true
+  inviteHint.value = ''
+  try {
+    const res = await greenhouseApi.invite(roomId.value, currentUsername.value, friendUsername)
+    if (res.data.success) {
+      inviteHint.value = `已邀请 ${friendUsername}`
+      setTimeout(() => { inviteHint.value = '' }, 3000)
+    }
+  } catch (err) {
+    inviteHint.value = err.response?.data?.detail || '邀请失败'
+  } finally {
+    inviteSending.value = false
+  }
+}
+
+onMounted(async () => {
+  sharedClockTimer.value = setInterval(() => {
+    sharedClock.value = Date.now()
+  }, 1000)
+  await loadRoom()
+  await Promise.all([loadSunshine(), loadTasks(), loadFriends()])
   connectWebSocket()
 })
 
@@ -378,8 +462,10 @@ watch(currentUsername, async () => {
 
 onUnmounted(() => {
   wsActive.value = false
+  if (reconnectTimer.value) clearTimeout(reconnectTimer.value)
   if (ws.value) ws.value.close()
   if (growTimer.value) clearInterval(growTimer.value)
+  if (sharedClockTimer.value) clearInterval(sharedClockTimer.value)
 })
 </script>
 
@@ -423,6 +509,23 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <div class="members-strip">
+        <div class="members-heading">
+          <span class="members-kicker">当前舱内</span>
+          <strong>{{ memberCountLabel }}</strong>
+        </div>
+        <div v-if="occupiedSeats.length" class="member-list">
+          <div v-for="seat in occupiedSeats" :key="seat.id" class="member-chip">
+            <span class="member-avatar">
+              <img v-if="isImageAvatar(seatAvatar(seat))" :src="seatAvatar(seat)" :alt="seatDisplayName(seat)">
+              <span v-else>{{ seatAvatar(seat) }}</span>
+            </span>
+            <span class="member-name">{{ seatDisplayName(seat) }}</span>
+          </div>
+        </div>
+        <span v-else class="members-empty">还没有人入座，选择一个座位开始吧。</span>
+      </div>
+
       <!-- 座位区域 - 自适应网格 -->
       <div class="seats-area">
         <div
@@ -446,7 +549,7 @@ onUnmounted(() => {
             <!-- 空座位 -->
             <template v-if="!getSeatUser(i - 1)">
               <div class="empty-seat">
-                <span class="seat-label">空位 · 座位 {{ i }}</span>
+                <span class="seat-label">空座-无人 · 座位 {{ i }}</span>
                 <SpaceButton
                   v-if="mySeat === null"
                   variant="primary"
@@ -461,28 +564,52 @@ onUnmounted(() => {
             <!-- 有人的座位 -->
             <template v-else>
               <div class="occupied-seat">
-                <span class="avatar">👨‍🚀</span>
-                <span class="username">{{ getSeatUser(i - 1).username }}</span>
+                <span class="avatar">
+                  <img
+                    v-if="isImageAvatar(seatAvatar(getSeatUser(i - 1)))"
+                    :src="seatAvatar(getSeatUser(i - 1))"
+                    :alt="seatDisplayName(getSeatUser(i - 1))"
+                  >
+                  <span v-else>{{ seatAvatar(getSeatUser(i - 1)) }}</span>
+                </span>
+                <span class="username">{{ seatDisplayName(getSeatUser(i - 1)) }}</span>
 
-                <!-- 专注中 -->
-                <template v-if="getGrowingInfo(getSeatUser(i - 1).username)">
-                  <div class="timer-display">
-                    {{ formatTime(getGrowingInfo(getSeatUser(i - 1).username).remaining_seconds || 0) }}
+                <!-- 所有人共享同一种专注状态展示，只有本人显示控制按钮 -->
+                <template v-if="isSeatGrowing(getSeatUser(i - 1).username)">
+                  <div class="growing-panel shared-growing-panel">
+                    <div class="my-timer">
+                      {{ formatTime(getGrowingSeconds(getSeatUser(i - 1).username)) }}
+                    </div>
+                    <div
+                      v-if="mySeat === i - 1 && selectedTaskTitle"
+                      class="linked-task-chip"
+                      style="margin-bottom: 8px;"
+                    >
+                      <span>关联:</span>
+                      <strong>{{ selectedTaskTitle }}</strong>
+                    </div>
+                    <SpaceProgressBar
+                      :progress="getGrowingSeconds(getSeatUser(i - 1).username)"
+                      :max="getGrowingDuration(getSeatUser(i - 1).username) * 60"
+                      color="blue"
+                      :height="'20px'"
+                    />
+                    <span class="status growing">座位锁定 / 专注进行中</span>
+                    <SpaceButton
+                      v-if="mySeat === i - 1"
+                      variant="danger"
+                      size="sm"
+                      @click="giveUpGrow"
+                    >
+                      放弃本轮专注
+                    </SpaceButton>
                   </div>
-                  <SpaceProgressBar
-                    :progress="getGrowingInfo(getSeatUser(i - 1).username).remaining_seconds || 0"
-                    :max="getGrowingInfo(getSeatUser(i - 1).username).duration * 60 || 1500"
-                    color="green"
-                    :height="'16px'"
-                    :show-text="false"
-                  />
-                  <span class="status growing">座位锁定 / 专注进行中</span>
                 </template>
 
                 <!-- 我的座位 - 控制面板 -->
-                <template v-if="mySeat === i - 1">
+                <template v-else-if="mySeat === i - 1">
                   <!-- 未开始专注 -->
-                  <div v-if="!isGrowing" class="control-panel">
+                  <div class="control-panel">
                     <!-- 时长选择 -->
                     <select v-model="selectedDuration" class="space-select">
                       <option v-for="d in durationOptions" :key="d" :value="d">
@@ -523,23 +650,6 @@ onUnmounted(() => {
                     </SpaceButton>
                   </div>
 
-                  <!-- 专注中 -->
-                  <div v-else class="growing-panel">
-                    <div class="my-timer">{{ formatTime(growProgress) }}</div>
-                    <div v-if="selectedTaskTitle" class="linked-task-chip" style="margin-bottom: 8px;">
-                      <span>关联:</span>
-                      <strong>{{ selectedTaskTitle }}</strong>
-                    </div>
-                    <SpaceProgressBar
-                      :progress="growProgress"
-                      :max="selectedDuration * 60"
-                      color="blue"
-                      :height="'20px'"
-                    />
-                    <SpaceButton variant="danger" size="sm" @click="giveUpGrow">
-                      放弃本轮专注
-                    </SpaceButton>
-                  </div>
                 </template>
               </div>
             </template>
@@ -564,6 +674,34 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <Teleport to="body">
+        <Transition name="modal">
+          <div v-if="showInvitePanel" class="invite-overlay" @click.self="showInvitePanel = false">
+            <div class="invite-panel">
+              <header class="invite-header">
+                <h3>邀请好友进入协作舱</h3>
+                <button class="close-btn" @click="showInvitePanel = false">×</button>
+              </header>
+              <p class="invite-desc">选择一位好友，系统会发出可直达本房间的邀请消息。</p>
+              <div v-if="friends.length" class="invite-list">
+                <button
+                  v-for="friend in friends"
+                  :key="friend.id"
+                  class="invite-friend"
+                  :disabled="inviteSending"
+                  @click="sendInvite(friend.friend_username)"
+                >
+                  <span class="invite-name">{{ friend.friend_username }}</span>
+                  <span class="invite-arrow">邀请</span>
+                </button>
+              </div>
+              <div v-else class="invite-empty">你还没有已通过的好友，先去好友页加一个吧。</div>
+              <div v-if="inviteHint" class="invite-hint">{{ inviteHint }}</div>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
+
       <!-- 底部操作栏 -->
       <div class="bottom-bar">
         <!-- 表情栏 -->
@@ -578,6 +716,10 @@ onUnmounted(() => {
             {{ emoji }}
           </SpaceButton>
         </div>
+
+        <SpaceButton variant="secondary" @click="showInvitePanel = true">
+          邀请好友
+        </SpaceButton>
 
         <!-- 退出按钮 -->
         <SpaceButton variant="danger" @click="exitRoom">
@@ -731,6 +873,85 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
+.members-strip {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(0, 255, 255, 0.14);
+  border-radius: 18px;
+  background: rgba(7, 16, 34, 0.72);
+}
+
+.members-heading {
+  display: grid;
+  gap: 3px;
+  min-width: 90px;
+}
+
+.members-kicker {
+  color: rgba(164, 245, 255, 0.62);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.members-heading strong {
+  color: #eefcff;
+  font-size: 13px;
+}
+
+.member-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid rgba(0, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.member-avatar,
+.avatar {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(0, 117, 255, 0.8), rgba(132, 94, 247, 0.8));
+}
+
+.member-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+}
+
+.member-avatar img,
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.member-name {
+  color: #dffcff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.members-empty {
+  color: rgba(214, 247, 255, 0.58);
+  font-size: 12px;
+}
+
 /* 座位区域 */
 .seats-area {
   flex: 1;
@@ -806,7 +1027,9 @@ onUnmounted(() => {
 }
 
 .avatar {
-  font-size: 2.2em;
+  width: 58px;
+  height: 58px;
+  font-size: 2em;
 }
 
 .username {
@@ -941,6 +1164,96 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.invite-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.7);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 120;
+  padding: 20px;
+}
+
+.invite-panel {
+  width: min(560px, 100%);
+  max-height: min(78vh, 760px);
+  overflow: auto;
+  border-radius: 24px;
+  padding: 22px;
+  background: linear-gradient(180deg, rgba(10, 26, 46, 0.98), rgba(6, 13, 30, 0.99));
+  border: 1px solid rgba(0, 255, 255, 0.18);
+  box-shadow: 0 28px 64px rgba(2, 8, 18, 0.5);
+  color: #eefcff;
+}
+
+.invite-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.invite-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.invite-desc,
+.invite-empty,
+.invite-hint {
+  color: rgba(214, 247, 255, 0.74);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.invite-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.invite-friend {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+  color: #eefcff;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.invite-friend:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(0, 255, 255, 0.3);
+  background: rgba(0, 255, 255, 0.06);
+}
+
+.invite-friend:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.invite-name {
+  font-weight: 600;
+}
+
+.invite-arrow {
+  font-size: 12px;
+  color: #9ef8ff;
+}
+
+.invite-hint {
+  margin-top: 12px;
+  color: #9ef8ff;
 }
 
 /* 任务选择器 */

@@ -1,7 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
 import SpaceButton from '../base/SpaceButton.vue'
 import SpaceCard from '../base/SpaceCard.vue'
 import SpaceModal from '../base/SpaceModal.vue'
@@ -9,6 +8,7 @@ import StarshipArchivePlaceholder from './StarshipArchivePlaceholder.vue'
 import CircleFeed from './CircleFeed.vue'
 import { WORLD_NAMES } from '../../constants/worldNames'
 import { useUserStore } from '../../stores/user'
+import { greenhouseApi } from '../../api'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -45,7 +45,7 @@ const themes = [
   { value: 'lunar', label: '月面港湾', icon: '月湾' }
 ]
 
-const roomCountLabel = computed(() => `${rooms.value.length} 间活跃舱室`)
+const roomCountLabel = computed(() => `${rooms.value.length} 间我的舱室`)
 
 const searchQuery = ref('')
 const filteredRooms = computed(() => {
@@ -64,7 +64,7 @@ let refreshInterval = null
 const loadRooms = async () => {
   isLoading.value = true
   try {
-    const res = await axios.get('/api/greenhouse/list', { params: { is_public: true } })
+    const res = await greenhouseApi.list(true, currentUsername.value)
     rooms.value = res.data.greenhouses || []
   } catch (error) {
     console.error('加载协作舱室失败:', error)
@@ -75,7 +75,7 @@ const loadRooms = async () => {
 
 const loadUserSunshine = async () => {
   try {
-    const res = await axios.get(`/api/greenhouse/sunshine/${currentUsername.value}`)
+    const res = await greenhouseApi.getSunshine(currentUsername.value)
     userSunshine.value = res.data.sunshine || 0
   } catch (error) {
     console.error('加载算力余额失败:', error)
@@ -92,7 +92,7 @@ const createRoom = async () => {
   isLoading.value = true
 
   try {
-    const res = await axios.post('/api/greenhouse/create', {
+    const res = await greenhouseApi.create({
       name: newRoom.value.name,
       description: newRoom.value.description,
       max_seats: newRoom.value.max_seats,
@@ -115,7 +115,11 @@ const createRoom = async () => {
       await loadRooms()
     }
   } catch (error) {
-    errorMessage.value = error.response?.data?.error || '创建协作舱失败。'
+    errorMessage.value =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      (error.request ? '协作舱服务没有响应，请确认本地后端正在运行。' : '创建协作舱失败。')
   } finally {
     isLoading.value = false
   }
@@ -125,10 +129,24 @@ const joinRoom = (roomId) => {
   router.push(`/collab/${roomId}`)
 }
 
+const deleteRoom = async (room) => {
+  if (room.owner_username !== currentUsername.value) return
+  if (!confirm(`确定要删除协作舱「${room.name}」吗？这个操作无法撤销。`)) return
+  try {
+    await greenhouseApi.delete(room.id, currentUsername.value)
+    rooms.value = rooms.value.filter((item) => item.id !== room.id)
+    await loadRooms()
+  } catch (error) {
+    alert(error.response?.data?.detail || '删除协作舱失败')
+  }
+}
+
 const getThemeIcon = (theme) => {
   const match = themes.find((item) => item.value === theme)
   return match?.icon || 'ORBIT'
 }
+
+const roomRelation = (room) => room.owner_username === currentUsername.value ? '我创建的' : '我进入过'
 
 onMounted(() => {
   loadRooms()
@@ -138,6 +156,7 @@ onMounted(() => {
 
 watch(currentUsername, () => {
   loadUserSunshine()
+  loadRooms()
 })
 
 onUnmounted(() => {
@@ -195,7 +214,7 @@ onUnmounted(() => {
       <div class="section-header">
         <div>
           <p class="section-kicker">协作舱网格</p>
-          <h2>公开协作舱</h2>
+          <h2>我的协作舱</h2>
         </div>
         <SpaceButton variant="success" @click="showCreateModal = true">
           + 创建协作舱
@@ -223,12 +242,21 @@ onUnmounted(() => {
           @click="joinRoom(room.id)"
         >
           <div class="room-meta">
+            <span class="room-relation">{{ roomRelation(room) }}</span>
             <span class="online-count">
               <span class="status-dot online"></span>
               {{ room.current_users || 0 }}/{{ room.max_seats }} 已入座
             </span>
             <span class="room-owner">👨‍✈️ {{ room.owner_username || '未知' }}</span>
             <span class="room-visibility">{{ room.is_public === false ? '私密舱' : '公开中继' }}</span>
+            <SpaceButton
+              v-if="room.owner_username === currentUsername"
+              variant="danger"
+              size="sm"
+              @click.stop="deleteRoom(room)"
+            >
+              删除协作舱
+            </SpaceButton>
           </div>
         </SpaceCard>
       </div>
@@ -236,7 +264,7 @@ onUnmounted(() => {
       <div v-else class="empty-state">
         <div class="empty-icon">星桥</div>
         <h3 style="margin: 0 0 10px; color: #9ef8ff;">暂无活跃协作舱</h3>
-        <p>当前没有公开协作频道。创建第一个协作舱，发起一场共享专注吧。</p>
+        <p>这里只显示你创建的舱，以及你曾经进入过的好友协作舱。</p>
         <SpaceButton variant="primary" style="margin-top: 16px;" @click="showCreateModal = true">
           + 创建第一个协作舱
         </SpaceButton>
@@ -275,9 +303,11 @@ onUnmounted(() => {
             type="button"
             class="theme-btn"
             :class="{ active: newRoom.theme === theme.value }"
+            :aria-pressed="newRoom.theme === theme.value"
             @click="newRoom.theme = theme.value"
           >
-            {{ theme.icon }} {{ theme.label }}
+            <span class="theme-btn-copy">{{ theme.icon }} {{ theme.label }}</span>
+            <span v-if="newRoom.theme === theme.value" class="theme-selected-badge">✓ 已选择</span>
           </button>
         </div>
       </div>
@@ -427,6 +457,11 @@ onUnmounted(() => {
   color: rgba(164, 245, 255, 0.6);
 }
 
+.room-relation {
+  color: #6ee7b7;
+  font-weight: 600;
+}
+
 .search-bar {
   margin-bottom: 16px;
 }
@@ -517,17 +552,58 @@ onUnmounted(() => {
 }
 
 .theme-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 48px;
   border: 1px solid rgba(0, 255, 255, 0.12);
   border-radius: 14px;
   padding: 12px;
   background: rgba(255, 255, 255, 0.04);
   color: #eefcff;
+  font: inherit;
+  font-weight: 700;
   cursor: pointer;
+  outline: none;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+}
+
+.theme-btn:hover {
+  border-color: rgba(0, 255, 255, 0.5);
+  background: linear-gradient(180deg, rgba(16, 216, 255, 0.13), rgba(35, 109, 255, 0.12));
+  color: #ffffff;
+  box-shadow: 0 0 18px rgba(0, 229, 255, 0.14);
+  transform: translateY(-2px);
+}
+
+.theme-btn:focus-visible {
+  border-color: rgba(143, 247, 255, 0.9);
+  box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.2), 0 0 18px rgba(0, 229, 255, 0.16);
 }
 
 .theme-btn.active {
-  border-color: rgba(0, 255, 255, 0.34);
-  background: linear-gradient(180deg, rgba(16, 216, 255, 0.18), rgba(35, 109, 255, 0.18));
+  border: 2px solid rgba(0, 255, 255, 0.95);
+  background: linear-gradient(180deg, rgba(16, 216, 255, 0.34), rgba(35, 109, 255, 0.3));
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(166, 250, 255, 0.24), 0 0 0 3px rgba(0, 229, 255, 0.12), 0 0 24px rgba(0, 229, 255, 0.28);
+}
+
+.theme-btn-copy {
+  min-width: 0;
+  text-align: left;
+}
+
+.theme-selected-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: #00e5ff;
+  color: #06233a;
+  font-size: 11px;
+  font-weight: 900;
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.55);
 }
 
 .checkbox-label {

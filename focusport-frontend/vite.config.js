@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 
-const devApiTarget = process.env.VITE_DEV_API_TARGET || 'http://127.0.0.1:8010'
+const devApiTarget = process.env.VITE_DEV_API_TARGET || 'http://127.0.0.1:8005'
 const devWsTarget = devApiTarget.replace(/^http/, 'ws')
 
 export default defineConfig({

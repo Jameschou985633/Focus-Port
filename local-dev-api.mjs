@@ -2,10 +2,11 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { extname } from 'node:path'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 
 const HOST = process.env.HOST || '127.0.0.1'
 const PORT = Number(process.env.PORT || 8010)
+const DEFAULT_QWEN_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
 const STATE_FILE = new URL('./.dev-api-state.json', import.meta.url)
 const STATIC_DIR = new URL('./static/', import.meta.url)
 const ADMIN_UPLOAD_ALLOWED_SUFFIXES = new Set(['.pdf', '.doc', '.docx', '.mp3', '.wav', '.m4a', '.ogg'])
@@ -23,6 +24,46 @@ const PHONE_USAGE_REWARD_TIERS = [
 const ADMIN_TEST_USERNAME = 'admin_test'
 const ADMIN_TEST_PASSWORD = 'FocusPortAdmin888'
 const ADMIN_TEST_COMPUTE = 999999999
+
+const getEnvValue = (...keys) => {
+  for (const key of keys) {
+    const value = process.env[key]
+    if (value && String(value).trim()) return String(value).trim()
+  }
+  return ''
+}
+
+const loadLocalEnvFile = () => {
+  const localEnvPath = new URL('./.env.local', import.meta.url)
+  if (!existsSync(localEnvPath)) return
+
+  const content = readFileSync(localEnvPath, 'utf8')
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const equalsIndex = trimmed.indexOf('=')
+    if (equalsIndex <= 0) continue
+
+    const key = trimmed.slice(0, equalsIndex).trim()
+    let value = trimmed.slice(equalsIndex + 1).trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    if (key && !(key in process.env)) {
+      process.env[key] = value
+    }
+  }
+}
+
+loadLocalEnvFile()
+
+const getQwenBaseUrl = () => (
+  getEnvValue('QWEN_BASE_URL', 'DASHSCOPE_BASE_URL', 'VITE_QWEN_BASE_URL') || DEFAULT_QWEN_BASE_URL
+).replace(/\/+$/, '')
+
+const getQwenApiKey = () => getEnvValue('QWEN_API_KEY', 'DASHSCOPE_API_KEY', 'VITE_QWEN_API_KEY')
+
+const getQwenVisionModel = () => getEnvValue('QWEN_VISION_MODEL', 'VITE_QWEN_VISION_MODEL') || 'qwen-vl-plus'
 
 const mockExams = [
   {
@@ -90,7 +131,7 @@ const defaultGrowth = () => ({
 
 const loadState = async () => {
   if (!existsSync(STATE_FILE)) {
-    return { users: {}, growth: {}, todos: {}, focusSessions: {}, phoneUsage: {}, aiChats: {}, messages: {}, friends: [], arcadeRooms: {}, computeLedger: {}, inventory: {}, placed: {}, nextTaskId: 1, nextAiChatId: 1, nextMessageId: 1, nextFriendshipId: 1, nextInventoryId: 1, nextPlacedId: 1 }
+    return { users: {}, growth: {}, todos: {}, focusSessions: {}, phoneUsage: {}, aiChats: {}, messages: {}, friends: [], arcadeRooms: {}, greenhouses: {}, computeLedger: {}, inventory: {}, placed: {}, nextTaskId: 1, nextAiChatId: 1, nextMessageId: 1, nextFriendshipId: 1, nextGreenhouseId: 1, nextInventoryId: 1, nextPlacedId: 1 }
   }
   try {
     const loaded = JSON.parse(await readFile(STATE_FILE, 'utf8'))
@@ -104,6 +145,7 @@ const loadState = async () => {
       messages: loaded.messages || {},
       friends: Array.isArray(loaded.friends) ? loaded.friends : [],
       arcadeRooms: loaded.arcadeRooms || {},
+      greenhouses: loaded.greenhouses || {},
       computeLedger: loaded.computeLedger || {},
       inventory: loaded.inventory || {},
       placed: loaded.placed || {},
@@ -111,17 +153,19 @@ const loadState = async () => {
       nextAiChatId: loaded.nextAiChatId || 1,
       nextMessageId: loaded.nextMessageId || 1,
       nextFriendshipId: loaded.nextFriendshipId || 1,
+      nextGreenhouseId: loaded.nextGreenhouseId || 1,
       nextInventoryId: loaded.nextInventoryId || 1,
       nextPlacedId: loaded.nextPlacedId || 1
     }
   } catch {
-    return { users: {}, growth: {}, todos: {}, focusSessions: {}, phoneUsage: {}, aiChats: {}, messages: {}, friends: [], arcadeRooms: {}, computeLedger: {}, inventory: {}, placed: {}, nextTaskId: 1, nextAiChatId: 1, nextMessageId: 1, nextFriendshipId: 1, nextInventoryId: 1, nextPlacedId: 1 }
+    return { users: {}, growth: {}, todos: {}, focusSessions: {}, phoneUsage: {}, aiChats: {}, messages: {}, friends: [], arcadeRooms: {}, greenhouses: {}, computeLedger: {}, inventory: {}, placed: {}, nextTaskId: 1, nextAiChatId: 1, nextMessageId: 1, nextFriendshipId: 1, nextGreenhouseId: 1, nextInventoryId: 1, nextPlacedId: 1 }
   }
 }
 
 let state = await loadState()
 let writeQueue = Promise.resolve()
 const arcadeWsConnections = new Map()
+const greenhouseWsConnections = new Map()
 
 const saveState = async () => {
   await writeFile(STATE_FILE, JSON.stringify(state, null, 2), 'utf8')
@@ -184,6 +228,143 @@ const readBody = async (req) => {
   }
 }
 
+const stripMarkdownCodeFence = (rawText = '') => {
+  const trimmed = String(rawText || '').trim()
+  if (!trimmed) return ''
+  return trimmed
+    .replace(/^\s*```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim()
+}
+
+const extractJsonObjectText = (rawText = '') => {
+  const normalized = stripMarkdownCodeFence(rawText)
+  if (!normalized) return ''
+  const match = normalized.match(/\{[\s\S]*\}/)
+  return match ? match[0] : normalized
+}
+
+const parseUsageMinutes = (value) => {
+  if (value === null || value === undefined) return 0
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.min(1440, Math.round(value)))
+  }
+  const text = String(value).trim().toLowerCase()
+  if (!text) return 0
+  const normalized = text
+    .replace(/小时|小時|时/g, 'h')
+    .replace(/分钟|分鐘|分/g, 'm')
+  const hourMatch = normalized.match(/(\d+(?:\.\d+)?)\s*h/)
+  const minuteMatch = normalized.match(/(\d+(?:\.\d+)?)\s*m/)
+  if (hourMatch || minuteMatch) {
+    const hours = hourMatch ? Number(hourMatch[1]) : 0
+    const minutes = minuteMatch ? Number(minuteMatch[1]) : 0
+    return Math.max(0, Math.min(1440, Math.round(hours * 60 + minutes)))
+  }
+  const numberMatch = normalized.match(/\d+(?:\.\d+)?/)
+  return numberMatch ? Math.max(0, Math.min(1440, Math.round(Number(numberMatch[0])))) : 0
+}
+
+const normalizePhoneUsageCategory = (rawCategory = '') => {
+  const text = String(rawCategory || '').trim().toLowerCase()
+  if (/(社交|聊天|微信|qq|微博|小红书|social)/i.test(text)) return 'social'
+  if (/(学习|工作|效率|阅读|文档|课程|product|study|work|learn)/i.test(text)) return 'productivity'
+  if (/(工具|系统|浏览器|地图|支付|tool|utility)/i.test(text)) return 'tools'
+  if (/(娱乐|游戏|视频|短视频|直播|音乐|game|video|entertain)/i.test(text)) return 'entertainment'
+  return 'entertainment'
+}
+
+const normalizePhoneUsageBreakdown = (raw = {}, fallbackEntertainment = 0) => {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  const breakdown = {
+    entertainment: parseUsageMinutes(source.entertainment ?? source.entertainment_minutes ?? source.娱乐 ?? 0),
+    social: parseUsageMinutes(source.social ?? source.social_minutes ?? source.社交 ?? 0),
+    tools: parseUsageMinutes(source.tools ?? source.tool_minutes ?? source.tool ?? source.工具 ?? 0),
+    productivity: parseUsageMinutes(source.productivity ?? source.productivity_minutes ?? source.效率 ?? source.学习 ?? source.工作 ?? 0)
+  }
+  if (!Object.values(breakdown).some(Boolean) && fallbackEntertainment) {
+    breakdown.entertainment = parseUsageMinutes(fallbackEntertainment)
+  }
+  return breakdown
+}
+
+const phoneUsageWeightedMinutes = (breakdown, fallbackMinutes) => {
+  const item = normalizePhoneUsageBreakdown(breakdown, fallbackMinutes)
+  return Math.max(0, Math.min(1440, Math.round(
+    item.entertainment + item.social * 0.75 + item.tools * 0.35 - item.productivity * 0.45
+  )))
+}
+
+const phoneUsageDominantCategory = (breakdown) => {
+  const normalized = normalizePhoneUsageBreakdown(breakdown)
+  let dominant = ''
+  let minutes = 0
+  for (const [key, value] of Object.entries(normalized)) {
+    if (Number(value) > minutes) {
+      dominant = key
+      minutes = Number(value)
+    }
+  }
+  if (minutes <= 0) return ''
+  return {
+    entertainment: '娱乐',
+    social: '社交',
+    tools: '工具',
+    productivity: '效率'
+  }[dominant] || '娱乐'
+}
+
+const parsePhoneUsageAiPayload = (rawText = '') => {
+  const candidate = extractJsonObjectText(rawText)
+  let parsed = {}
+  try {
+    parsed = JSON.parse(candidate)
+  } catch {
+    return null
+  }
+  const apps = Array.isArray(parsed.apps) ? parsed.apps : []
+  const normalizedApps = []
+  const appBreakdown = { entertainment: 0, social: 0, tools: 0, productivity: 0 }
+  for (const item of apps.slice(0, 12)) {
+    if (!item || typeof item !== 'object') continue
+    const minutes = parseUsageMinutes(item.minutes || 0)
+    const category = String(item.category || '娱乐').slice(0, 20)
+    const bucket = normalizePhoneUsageCategory(category)
+    appBreakdown[bucket] = Math.min(1440, appBreakdown[bucket] + minutes)
+    normalizedApps.push({
+      name: String(item.name || '未知应用').slice(0, 40),
+      minutes,
+      category
+    })
+  }
+  const directBreakdown = normalizePhoneUsageBreakdown(parsed.category_breakdown || parsed)
+  const categoryBreakdown = {
+    entertainment: Math.max(directBreakdown.entertainment, appBreakdown.entertainment),
+    social: Math.max(directBreakdown.social, appBreakdown.social),
+    tools: Math.max(directBreakdown.tools, appBreakdown.tools),
+    productivity: Math.max(directBreakdown.productivity, appBreakdown.productivity)
+  }
+  const entertainmentMinutes = parseUsageMinutes(parsed.entertainment_minutes || categoryBreakdown.entertainment || 0)
+  if (entertainmentMinutes > categoryBreakdown.entertainment) {
+    categoryBreakdown.entertainment = entertainmentMinutes
+  }
+  const totalMinutes = parseUsageMinutes(parsed.total_minutes || Object.values(categoryBreakdown).reduce((sum, value) => sum + Number(value || 0), 0) || entertainmentMinutes)
+  const dominantCategory = phoneUsageDominantCategory(categoryBreakdown)
+  const topCategory = dominantCategory || String(parsed.top_category || '娱乐').trim() || '娱乐'
+  return {
+    total_minutes: totalMinutes,
+    entertainment_minutes: entertainmentMinutes,
+    social_minutes: categoryBreakdown.social,
+    tool_minutes: categoryBreakdown.tools,
+    productivity_minutes: categoryBreakdown.productivity,
+    weighted_minutes: phoneUsageWeightedMinutes(categoryBreakdown, entertainmentMinutes),
+    category_breakdown: categoryBreakdown,
+    top_category: topCategory.slice(0, 20),
+    apps: normalizedApps,
+    summary: String(parsed.summary || '已识别屏幕使用时长。').slice(0, 240)
+  }
+}
+
 const ensureUser = (username, password = 'dev') => {
   const name = String(username || '').trim()
   if (!name) return null
@@ -232,25 +413,6 @@ const phoneUsageRewardForMinutes = (minutes) => {
   const normalized = Math.max(0, Math.min(1440, Number(minutes || 0)))
   const tier = PHONE_USAGE_REWARD_TIERS.find(([limit]) => normalized <= limit)
   return tier ? tier[1] : 0
-}
-
-const normalizePhoneUsageBreakdown = (raw = {}, fallbackEntertainment = 0) => {
-  const source = raw && typeof raw === 'object' ? raw : {}
-  const breakdown = {
-    entertainment: Math.max(0, Math.min(1440, Number(source.entertainment ?? source.entertainment_minutes ?? source['娱乐'] ?? 0))),
-    social: Math.max(0, Math.min(1440, Number(source.social ?? source.social_minutes ?? source['社交'] ?? 0))),
-    tools: Math.max(0, Math.min(1440, Number(source.tools ?? source.tool_minutes ?? source.tool ?? source['工具'] ?? 0))),
-    productivity: Math.max(0, Math.min(1440, Number(source.productivity ?? source.productivity_minutes ?? source['效率'] ?? source['学习'] ?? source['工作'] ?? 0)))
-  }
-  if (!Object.values(breakdown).some(Boolean) && fallbackEntertainment) {
-    breakdown.entertainment = Math.max(0, Math.min(1440, Number(fallbackEntertainment || 0)))
-  }
-  return breakdown
-}
-
-const phoneUsageWeightedMinutes = (breakdown, fallbackMinutes) => {
-  const item = normalizePhoneUsageBreakdown(breakdown, fallbackMinutes)
-  return Math.max(0, Math.min(1440, Math.round(item.entertainment + item.social * 0.75 + item.tools * 0.35 - item.productivity * 0.45)))
 }
 
 const gradeExam = (exam, answers = {}) => {
@@ -979,6 +1141,69 @@ const broadcastArcadeRoom = (roomCode, payload, exceptSocket = null) => {
   }
 }
 
+const greenhouseRoomSockets = (roomId) => {
+  const key = String(roomId)
+  if (!greenhouseWsConnections.has(key)) greenhouseWsConnections.set(key, new Set())
+  return greenhouseWsConnections.get(key)
+}
+
+const greenhouseSeatWithProfile = (seat = {}) => {
+  const username = String(seat.username || '').trim()
+  const profile = username ? state.users?.[username] || {} : {}
+  return {
+    ...seat,
+    nickname: username ? String(profile.nickname || username) : '',
+    avatar: username ? String(profile.avatar || '👨‍🚀') : '👨‍🚀'
+  }
+}
+
+const greenhouseSyncPayload = (room = {}) => ({
+  type: 'sync',
+  seats: Array.isArray(room.seats) ? room.seats.map(greenhouseSeatWithProfile) : [],
+  growing_users: Array.isArray(room.growing_users) ? room.growing_users : []
+})
+
+const leaveUserFromOtherGreenhouses = (username, currentRoomId) => {
+  const affectedRoomIds = []
+  for (const [roomId, room] of Object.entries(state.greenhouses || {})) {
+    if (String(roomId) === String(currentRoomId)) continue
+    const seats = Array.isArray(room.seats) ? room.seats : []
+    const growingUsers = Array.isArray(room.growing_users) ? room.growing_users : []
+    const hadSeat = seats.some((seat) => seat.is_occupied && seat.username === username)
+    const hadGrowingSession = growingUsers.some((item) => item.username === username)
+    if (!hadSeat && !hadGrowingSession) continue
+    seats.forEach((seat) => {
+      if (seat.username === username) {
+        seat.username = ''
+        seat.is_occupied = false
+      }
+    })
+    room.seats = seats
+    room.growing_users = growingUsers.filter((item) => item.username !== username)
+    affectedRoomIds.push(String(roomId))
+  }
+  return affectedRoomIds
+}
+
+const broadcastGreenhouseRoom = (roomId, payload, exceptSocket = null) => {
+  for (const socket of Array.from(greenhouseRoomSockets(roomId))) {
+    if (socket === exceptSocket || socket.destroyed) continue
+    sendWsJson(socket, payload)
+  }
+}
+
+const closeGreenhouseRoomSockets = (roomId) => {
+  const sockets = greenhouseWsConnections.get(String(roomId))
+  if (!sockets) return
+  for (const socket of Array.from(sockets)) {
+    try {
+      sendWsJson(socket, { type: 'room_deleted' })
+      socket.end()
+    } catch {}
+  }
+  greenhouseWsConnections.delete(String(roomId))
+}
+
 const arcadeSyncPayload = (room = {}) => ({
   type: 'sync',
   player_host: room.player_host,
@@ -1084,6 +1309,284 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { success: true, username })
     }
 
+    if (req.method === 'GET' && path === '/api/greenhouse/list') {
+      const isPublic = url.searchParams.get('is_public') !== 'false'
+      const username = String(url.searchParams.get('username') || '').trim()
+      const rooms = Object.values(state.greenhouses || {})
+        .filter((room) => {
+          if (!username) return !isPublic || room.is_public
+          const enteredUsers = Array.isArray(room.member_usernames) ? room.member_usernames : []
+          const seatedUsers = Array.isArray(room.seats)
+            ? room.seats.filter((seat) => seat.is_occupied).map((seat) => seat.username)
+            : []
+          return room.owner_username === username || enteredUsers.includes(username) || seatedUsers.includes(username)
+        })
+        .sort((a, b) => Number(b.id) - Number(a.id))
+        .map((room) => ({
+          ...room,
+          seats: Array.isArray(room.seats) ? room.seats.map(greenhouseSeatWithProfile) : [],
+          current_users: Array.isArray(room.seats) ? room.seats.filter((seat) => seat.is_occupied).length : 0
+        }))
+      return send(res, 200, { success: true, greenhouses: rooms })
+    }
+
+    if (req.method === 'POST' && path === '/api/greenhouse/create') {
+      const body = await readBody(req)
+      const name = String(body.name || '').trim()
+      const ownerUsername = String(body.owner_username || body.username || '').trim() || 'guest'
+      const maxSeats = Math.max(2, Math.min(8, Number(body.max_seats || 4)))
+      if (!name) return send(res, 400, { success: false, detail: '请输入协作舱名称。' })
+
+      ensureUser(ownerUsername)
+      const id = Number(state.nextGreenhouseId || 1)
+      state.nextGreenhouseId = id + 1
+      const room = {
+        id,
+        room_code: createHash('sha1').update(`${ownerUsername}:${id}:${Date.now()}`).digest('hex').slice(0, 8).toUpperCase(),
+        name,
+        description: String(body.description || '').trim(),
+        owner_username: ownerUsername,
+        max_seats: maxSeats,
+        is_public: body.is_public !== false,
+        password: String(body.password || ''),
+        theme: String(body.theme || 'space'),
+        total_sunshine: 0,
+        created_at: new Date().toISOString(),
+        member_usernames: [ownerUsername],
+        seats: Array.from({ length: maxSeats }, (_, index) => ({
+          id: `${id}-${index + 1}`,
+          seat_number: index + 1,
+          seat_index: index,
+          username: '',
+          is_occupied: false
+        }))
+      }
+      state.greenhouses[id] = room
+      await saveState()
+      return send(res, 200, { success: true, room_id: id, room_code: room.room_code })
+    }
+
+    const greenhouseDeleteMatch = path.match(/^\/api\/greenhouse\/(\d+)$/)
+    if (req.method === 'DELETE' && greenhouseDeleteMatch) {
+      const roomId = String(Number(greenhouseDeleteMatch[1]))
+      const body = await readBody(req)
+      const username = String(body.username || '').trim()
+      const room = state.greenhouses?.[roomId]
+      if (!room) return send(res, 404, { detail: '协作舱不存在' })
+      if (room.owner_username !== username) return send(res, 403, { detail: '只有协作舱创建者可以删除' })
+      closeGreenhouseRoomSockets(roomId)
+      delete state.greenhouses[roomId]
+      Object.keys(state.messages).forEach((user) => {
+        state.messages[user] = state.messages[user].filter((message) => {
+          if (message.category !== 'collab') return true
+          return !String(message.content || '').includes(`"room_id":${roomId}`)
+        })
+      })
+      state.friends = Array.isArray(state.friends) ? state.friends : []
+      await saveState()
+      return send(res, 200, { success: true, room_id: Number(roomId) })
+    }
+
+    const greenhouseSunshineMatch = path.match(/^\/api\/(?:greenhouse\/sunshine|sunshine)\/([^/]+)$/)
+    if (req.method === 'GET' && greenhouseSunshineMatch) {
+      const username = decodeURIComponent(greenhouseSunshineMatch[1])
+      ensureUser(username)
+      return send(res, 200, { success: true, sunshine: Number(state.growth[username].diamonds || 0) })
+    }
+
+    if (req.method === 'POST' && path === '/api/greenhouse/join') {
+      const body = await readBody(req)
+      const roomId = String(Number(body.room_id))
+      const room = state.greenhouses?.[roomId]
+      const username = String(body.username || '').trim() || 'guest'
+      const seatIndex = Math.max(0, Number(body.seat_index || 0))
+      if (!room) return send(res, 404, { detail: '房间不存在' })
+      const seat = room.seats?.[seatIndex]
+      if (!seat) return send(res, 404, { detail: '座位不存在' })
+      const occupiedByOther = room.seats.some((item) => item.is_occupied && item.username !== username)
+      if (seat.is_occupied && seat.username !== username) return send(res, 400, { detail: '该座位已被占用' })
+      const affectedRoomIds = leaveUserFromOtherGreenhouses(username, roomId)
+      room.seats.forEach((item) => {
+        if (item.username === username) {
+          item.username = ''
+          item.is_occupied = false
+        }
+      })
+      seat.username = username
+      seat.is_occupied = true
+      room.member_usernames = Array.isArray(room.member_usernames) ? room.member_usernames : []
+      if (!room.member_usernames.includes(username)) room.member_usernames.push(username)
+      await saveState()
+      affectedRoomIds.forEach((affectedRoomId) => {
+        const affectedRoom = state.greenhouses?.[affectedRoomId]
+        if (affectedRoom) broadcastGreenhouseRoom(affectedRoomId, greenhouseSyncPayload(affectedRoom))
+      })
+      broadcastGreenhouseRoom(roomId, greenhouseSyncPayload(room))
+      return send(res, 200, { success: true, seats: room.seats.map(greenhouseSeatWithProfile), occupied_by_other: occupiedByOther })
+    }
+
+    if (req.method === 'POST' && path === '/api/greenhouse/visit') {
+      const body = await readBody(req)
+      const roomId = String(Number(body.room_id))
+      const room = state.greenhouses?.[roomId]
+      const username = String(body.username || '').trim() || 'guest'
+      if (!room) return send(res, 404, { detail: '房间不存在' })
+      ensureUser(username)
+      const affectedRoomIds = leaveUserFromOtherGreenhouses(username, roomId)
+      room.member_usernames = Array.isArray(room.member_usernames) ? room.member_usernames : []
+      if (!room.member_usernames.includes(username)) room.member_usernames.push(username)
+      await saveState()
+      affectedRoomIds.forEach((affectedRoomId) => {
+        const affectedRoom = state.greenhouses?.[affectedRoomId]
+        if (affectedRoom) broadcastGreenhouseRoom(affectedRoomId, greenhouseSyncPayload(affectedRoom))
+      })
+      return send(res, 200, { success: true })
+    }
+
+    if (req.method === 'POST' && path === '/api/greenhouse/leave') {
+      const body = await readBody(req)
+      const roomId = String(Number(body.room_id))
+      const room = state.greenhouses?.[roomId]
+      const username = String(body.username || '').trim()
+      if (!room) return send(res, 404, { detail: '房间不存在' })
+      room.seats.forEach((seat) => {
+        if (seat.username === username) {
+          seat.username = ''
+          seat.is_occupied = false
+        }
+      })
+      room.growing_users = (room.growing_users || []).filter((item) => item.username !== username)
+      await saveState()
+      broadcastGreenhouseRoom(roomId, greenhouseSyncPayload(room))
+      return send(res, 200, { success: true, seats: room.seats })
+    }
+
+    if (req.method === 'POST' && path === '/api/greenhouse/start') {
+      const body = await readBody(req)
+      const roomId = String(Number(body.room_id))
+      const room = state.greenhouses?.[roomId]
+      const username = String(body.username || '').trim() || 'guest'
+      if (!room) return send(res, 404, { detail: '房间不存在' })
+      room.growing_users = (room.growing_users || []).filter((item) => item.username !== username)
+      room.growing_users.push({
+        username,
+        duration_minutes: Math.max(1, Number(body.duration || 25)),
+        started_at: new Date().toISOString(),
+        task_id: body.task_id || null
+      })
+      await saveState()
+      broadcastGreenhouseRoom(roomId, { ...greenhouseSyncPayload(room), type: 'grow_started', username })
+      return send(res, 200, { success: true, growing_users: room.growing_users })
+    }
+
+    if (req.method === 'POST' && path === '/api/greenhouse/end') {
+      const body = await readBody(req)
+      const roomId = String(Number(body.room_id))
+      const room = state.greenhouses?.[roomId]
+      const username = String(body.username || '').trim()
+      if (!room) return send(res, 404, { detail: '房间不存在' })
+      room.growing_users = (room.growing_users || []).filter((item) => item.username !== username)
+      const diamondsEarned = body.status === 'completed' ? 1 : 0
+      if (diamondsEarned) {
+        ensureUser(username)
+        state.growth[username].diamonds = Number(state.growth[username].diamonds || 0) + diamondsEarned
+      }
+      await saveState()
+      broadcastGreenhouseRoom(roomId, {
+        ...greenhouseSyncPayload(room),
+        type: 'grow_ended',
+        username,
+        status: String(body.status || 'failed'),
+        diamonds_earned: diamondsEarned
+      })
+      return send(res, 200, { success: true, diamonds_earned: diamondsEarned, growing_users: room.growing_users })
+    }
+
+    if (req.method === 'POST' && path === '/api/greenhouse/emoji') {
+      const body = await readBody(req)
+      const roomId = String(Number(body.room_id))
+      const room = state.greenhouses?.[roomId]
+      if (!room) return send(res, 404, { detail: '房间不存在' })
+      broadcastGreenhouseRoom(roomId, {
+        type: 'emoji',
+        emoji: String(body.emoji || ''),
+        username: String(body.username || 'guest')
+      })
+      return send(res, 200, { success: true })
+    }
+
+    const greenhouseInviteMatch = path.match(/^\/api\/greenhouse\/(\d+)\/invite$/)
+    if (req.method === 'POST' && greenhouseInviteMatch) {
+      const roomId = String(Number(greenhouseInviteMatch[1]))
+      const room = state.greenhouses?.[roomId]
+      const body = await readBody(req)
+      const sender = String(body.sender || '').trim()
+      const receiver = String(body.receiver || '').trim()
+      if (!room) return send(res, 404, { detail: '房间不存在' })
+      if (!sender || !receiver) return send(res, 400, { detail: '邀请信息不完整' })
+      if (sender === receiver) return send(res, 400, { detail: '不能邀请自己' })
+      ensureUser(sender)
+      ensureUser(receiver)
+      const isFriend = state.friends.some((entry) => entry.status === 'accepted' && (
+        (entry.user_username === sender && entry.friend_username === receiver) ||
+        (entry.user_username === receiver && entry.friend_username === sender)
+      ))
+      if (!isFriend) return send(res, 403, { detail: '只能邀请好友加入协作舱' })
+      const content = JSON.stringify({
+        room_id: Number(roomId),
+        room_name: room.name,
+        room_code: room.room_code,
+        inviter: sender,
+        message: `${sender} 邀请你加入协作舱「${room.name}」`
+      })
+      const message = {
+        id: state.nextMessageId++,
+        sender,
+        receiver,
+        title: '协作舱邀请',
+        content,
+        category: 'collab',
+        is_read: false,
+        created_at: new Date().toISOString()
+      }
+      state.messages[receiver].unshift(message)
+      if (sender !== receiver) {
+        state.messages[sender].unshift({ ...message, is_read: true })
+      }
+      await saveState()
+      return send(res, 200, { success: true, message: normalizeMessage(message) })
+    }
+
+    const greenhouseMatch = path.match(/^\/api\/greenhouse\/(\d+)$/)
+    if (req.method === 'GET' && greenhouseMatch) {
+      const room = state.greenhouses?.[greenhouseMatch[1]]
+      if (!room) return send(res, 404, { detail: '房间不存在' })
+      const now = Date.now()
+      const growingUsers = (Array.isArray(room.growing_users) ? room.growing_users : [])
+        .map((item) => {
+          const duration = Math.max(1, Number(item.duration || item.duration_minutes || 25))
+          const startedAt = item.started_at || item.start_time
+          const startedTimestamp = startedAt ? new Date(String(startedAt).replace(' ', 'T')).getTime() : now
+          const elapsedSeconds = Number.isFinite(startedTimestamp)
+            ? Math.max(0, Math.floor((now - startedTimestamp) / 1000))
+            : 0
+          return {
+            ...item,
+            duration,
+            duration_minutes: duration,
+            started_at: startedAt || new Date(now).toISOString(),
+            remaining_seconds: Math.max(0, duration * 60 - elapsedSeconds)
+          }
+        })
+        .filter((item) => item.remaining_seconds > 0)
+      return send(res, 200, {
+        success: true,
+        room,
+        seats: Array.isArray(room.seats) ? room.seats.map(greenhouseSeatWithProfile) : [],
+        growing_users: growingUsers
+      })
+    }
+
     if (req.method === 'GET' && path === '/api/exams') {
       return send(res, 200, {
         success: true,
@@ -1156,21 +1659,125 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && path === '/api/phone-usage/analyze-screenshot') {
-      await readBody(req)
-      return send(res, 200, {
-        success: true,
-        source: 'manual',
-        total_minutes: 0,
-        entertainment_minutes: 0,
-        social_minutes: 0,
-        tool_minutes: 0,
-        productivity_minutes: 0,
-        weighted_minutes: 0,
-        category_breakdown: { entertainment: 0, social: 0, tools: 0, productivity: 0 },
-        top_category: '娱乐',
-        apps: [{ name: '本地开发模式请手动校正', minutes: 0, category: '娱乐' }],
-        summary: '本地开发 API 未配置视觉识别，请手动校正四类使用分钟数。'
+      const request = new Request(url.toString(), {
+        method: req.method,
+        headers: req.headers,
+        body: req,
+        duplex: 'half'
       })
+      const formData = await request.formData()
+      const upload = formData.get('file')
+      const username = String(formData.get('username') || 'guest').trim() || 'guest'
+      if (!upload || typeof upload.arrayBuffer !== 'function') {
+        return send(res, 400, { detail: '截图文件为空' })
+      }
+
+      const imageBytes = Buffer.from(await upload.arrayBuffer())
+      const contentType = upload.type || 'image/png'
+      const apiKey = getQwenApiKey()
+      if (!apiKey) {
+        return send(res, 200, {
+          success: true,
+          username,
+          source: 'qwen_unavailable',
+          total_minutes: 0,
+          entertainment_minutes: 0,
+          social_minutes: 0,
+          tool_minutes: 0,
+          productivity_minutes: 0,
+          weighted_minutes: 0,
+          category_breakdown: { entertainment: 0, social: 0, tools: 0, productivity: 0 },
+          top_category: '娱乐',
+          apps: [{ name: '本地开发模式请手动校正', minutes: 0, category: '娱乐' }],
+          summary: '本地开发 API 未配置视觉识别，请手动校正四类使用分钟数。'
+        })
+      }
+
+      try {
+        const imageDataUrl = `data:${contentType};base64,${imageBytes.toString('base64')}`
+        const response = await fetch(`${getQwenBaseUrl()}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: getQwenVisionModel(),
+            temperature: 0.1,
+            messages: [
+              {
+                role: 'system',
+                content: [
+                  '你是屏幕使用时长截图识别器。只输出 JSON，不要 Markdown。',
+                  '从 iOS/Android 屏幕使用时间截图中识别娱乐、社交、工具、效率/学习/工作时长。',
+                  '如果截图包含分类汇总，例如“社交 7小时21分钟、娱乐 2小时40分钟、工具 32分钟”，必须优先读取这些分类汇总，不要只读取柱状图或日均。',
+                  '请尽量给出四类分钟数，不要只返回主分类名；主分类应以分钟数最高的分类为准。'
+                ].join('')
+              },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: [
+                      '输出格式：{"total_minutes":总屏幕分钟数或娱乐分钟数,',
+                      '"entertainment_minutes":娱乐/游戏/视频/短视频分钟数,',
+                      '"social_minutes":社交/聊天/社区分钟数,',
+                      '"tool_minutes":工具/系统/浏览器/地图等中性工具分钟数,',
+                      '"productivity_minutes":学习/工作/效率应用分钟数,',
+                      '"category_breakdown":{"entertainment":娱乐分钟数,"social":社交分钟数,"tools":工具分钟数,"productivity":效率分钟数},',
+                      '"top_category":"娱乐/社交/工具/效率",',
+                      '"apps":[{"name":"应用名","minutes":分钟,"category":"娱乐/社交/工具/学习/工作"}],',
+                      '"summary":"一句话说明"}。若截图中的时长是“7小时21分钟”这类文本，也要换算成整数分钟，例如 441。若截图展示多个应用，请尽量按四类分别统计。'
+                    ].join('')
+                  },
+                  { type: 'image_url', image_url: { url: imageDataUrl } }
+                ]
+              }
+            ]
+          })
+        })
+
+        const rawContent = await response.text()
+        if (!response.ok) {
+          return send(res, 200, {
+            success: true,
+            username,
+            source: 'manual',
+            total_minutes: 0,
+            entertainment_minutes: 0,
+            social_minutes: 0,
+            tool_minutes: 0,
+            productivity_minutes: 0,
+            weighted_minutes: 0,
+            category_breakdown: { entertainment: 0, social: 0, tools: 0, productivity: 0 },
+            top_category: '娱乐',
+            apps: [{ name: '识别失败，请手动校正', minutes: 0, category: '娱乐' }],
+            summary: `AI 识别失败，请手动校正四类使用分钟数：${rawContent.slice(0, 80)}`
+          })
+        }
+
+        const parsed = parsePhoneUsageAiPayload(rawContent)
+        if (parsed) {
+          return send(res, 200, { success: true, username, source: 'qwen_vl', ...parsed })
+        }
+      } catch (error) {
+        return send(res, 200, {
+          success: true,
+          username,
+          source: 'manual',
+          total_minutes: 0,
+          entertainment_minutes: 0,
+          social_minutes: 0,
+          tool_minutes: 0,
+          productivity_minutes: 0,
+          weighted_minutes: 0,
+          category_breakdown: { entertainment: 0, social: 0, tools: 0, productivity: 0 },
+          top_category: '娱乐',
+          apps: [{ name: '识别失败，请手动校正', minutes: 0, category: '娱乐' }],
+          summary: `千问视觉服务连接失败，请检查网络后重试：${String(error?.message || error).slice(0, 80)}`
+        })
+      }
     }
 
     if (req.method === 'POST' && path === '/api/phone-usage/report') {
@@ -1210,9 +1817,34 @@ const server = http.createServer(async (req, res) => {
     }
 
     const avatarMatch = path.match(/^\/api\/user\/([^/]+)\/avatar$/)
+    if (req.method === 'POST' && avatarMatch) {
+      const username = decodeURIComponent(avatarMatch[1])
+      const body = await readBody(req)
+      const user = ensureUser(username)
+      user.avatar = String(body.avatar || '👨‍🚀').trim() || '👨‍🚀'
+      await saveState()
+      return send(res, 200, { success: true, avatar: user.avatar })
+    }
     if (req.method === 'GET' && avatarMatch) {
       const username = decodeURIComponent(avatarMatch[1])
-      return send(res, 200, { avatar: '', nickname: username })
+      const user = ensureUser(username)
+      return send(res, 200, { avatar: user.avatar || '👨‍🚀', nickname: user.nickname || username })
+    }
+
+    const profileMatch = path.match(/^\/api\/user\/([^/]+)\/profile$/)
+    if (req.method === 'POST' && profileMatch) {
+      const username = decodeURIComponent(profileMatch[1])
+      const body = await readBody(req)
+      const user = ensureUser(username)
+      user.nickname = String(body.nickname || username).trim().slice(0, 20) || username
+      user.bio = String(body.bio || '').trim().slice(0, 200)
+      await saveState()
+      return send(res, 200, { success: true, nickname: user.nickname, bio: user.bio })
+    }
+    if (req.method === 'GET' && profileMatch) {
+      const username = decodeURIComponent(profileMatch[1])
+      const user = ensureUser(username)
+      return send(res, 200, { success: true, username, avatar: user.avatar || '👨‍🚀', nickname: user.nickname || username, bio: user.bio || '' })
     }
 
     const statsMatch = path.match(/^\/api\/stats\/([^/]+)$/)
@@ -1795,6 +2427,42 @@ const server = http.createServer(async (req, res) => {
 
 server.on('upgrade', (req, socket) => {
   const url = new URL(req.url || '/', `http://${HOST}:${PORT}`)
+  const greenhouseMatch = url.pathname.match(/^\/ws\/greenhouse\/(\d+)$/)
+  if (greenhouseMatch) {
+    const roomId = greenhouseMatch[1]
+    const room = state.greenhouses?.[roomId]
+    const key = req.headers['sec-websocket-key']
+    if (!room || !key) {
+      socket.destroy()
+      return
+    }
+
+    const acceptKey = createHash('sha1')
+      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64')
+
+    socket.write([
+      'HTTP/1.1 101 Switching Protocols',
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Accept: ${acceptKey}`,
+      '',
+      ''
+    ].join('\r\n'))
+
+    const sockets = greenhouseRoomSockets(roomId)
+    sockets.add(socket)
+    sendWsJson(socket, greenhouseSyncPayload(room))
+
+    socket.on('data', (buffer) => {
+      const msg = decodeWsTextFrame(buffer)
+      if (msg?.type === 'close') socket.end()
+    })
+    socket.on('close', () => sockets.delete(socket))
+    socket.on('error', () => sockets.delete(socket))
+    return
+  }
+
   const match = url.pathname.match(/^\/ws\/arcade\/([^/]+)$/)
   if (!match) {
     socket.destroy()

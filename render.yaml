@@ -20,3 +20,7 @@ services:
         sync: false
       - key: QWEN_API_KEY
         sync: false
+      - key: QWEN_BASE_URL
+        value: https://dashscope.aliyuncs.com/compatible-mode/v1
+      - key: QWEN_VISION_MODEL
+        value: qwen-vl-plus

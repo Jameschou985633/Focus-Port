@@ -34,6 +34,7 @@ const isPlacementMode = ref(false)
 const isPlacementSubmitting = ref(false)
 const hoveredPlacementSlotId = ref('')
 const supportsHover = ref(false)
+const placementRotationOffset = ref(0)
 
 
 const userGrowth = ref({
@@ -48,10 +49,11 @@ const userGrowth = ref({
 
 const CITY_THEME = {
   sky: '#050914',
-  ambient: '#80d2ff',
-  ambientIntensity: 1.15,
-  directional: '#78b4ff',
-  directionalIntensity: 1.55,
+  // Neutral light keeps imported building colors close to the source assets.
+  ambient: '#e7f2ff',
+  ambientIntensity: 0.92,
+  directional: '#ffffff',
+  directionalIntensity: 1.05,
   fogPlane: '#0b1022',
   horizonGlow: '#6d5cff'
 }
@@ -139,6 +141,15 @@ const previewTargetFootprint = computed(() => {
     ? Number(previewSlot.value.footprint || 2.2) * 0.82
     : Number(previewSlot.value.footprint || 1.8)
 })
+
+const normalizeRotation = (value) => {
+  const rotation = Number(value || 0) % 360
+  return rotation < 0 ? rotation + 360 : rotation
+}
+
+const placementRotationY = computed(() => (
+  normalizeRotation((previewSlot.value?.rotation_y || 0) + placementRotationOffset.value)
+))
 
 const loadCitySlots = async () => {
   const normalizeSlots = (slots = []) => slots.map((slot) => ({
@@ -271,6 +282,12 @@ const syncPlacementModeFromStore = () => {
   }
 }
 
+const rotatePlacement = () => {
+  if (!isPlacementMode.value || props.previewMode || isPlacementSubmitting.value) return
+  if (placementType.value !== 'building') return
+  placementRotationOffset.value = (placementRotationOffset.value + 90) % 360
+}
+
 const handleSlotClick = async (slot) => {
   if (!slot) return
   if (!supportsHover.value && previewSlot.value?.slot_id !== slot.slot_id) {
@@ -285,6 +302,7 @@ const exitPlacementMode = () => {
   isPlacementMode.value = false
   placementItem.value = null
   hoveredPlacementSlotId.value = ''
+  placementRotationOffset.value = 0
   inventoryStore.cancelPlacement()
 }
 
@@ -299,7 +317,7 @@ const confirmPlacement = async (slot) => {
       slot.x || 0,
       getSafeCityY(slot.y),
       slot.z || 0,
-      slot.rotation_y || 0,
+      placementRotationY.value,
       1.0,
       'city',
       '3D'
@@ -310,9 +328,10 @@ const confirmPlacement = async (slot) => {
       selectedDecoration.value = normalizedPlaced
       upsertPlacedDecoration(normalizedPlaced)
     }
-    isPlacementMode.value = false
-    placementItem.value = null
-    hoveredPlacementSlotId.value = ''
+  isPlacementMode.value = false
+  placementItem.value = null
+  hoveredPlacementSlotId.value = ''
+  placementRotationOffset.value = 0
     await loadPlacedDecorations({
       preserveExisting: true,
       fallbackItem: placedItem,
@@ -379,11 +398,27 @@ watch(previewSlot, (slot) => {
     x: slot.x,
     y: getSafeCityY(slot.y),
     z: slot.z,
-    rotationY: slot.rotation_y || 0
+    rotationY: placementRotationY.value
+  })
+})
+
+watch(placementRotationY, (rotationY) => {
+  if (!previewSlot.value || !placementItem.value || props.previewMode) return
+  inventoryStore.updateGhostPreview({
+    slotId: previewSlot.value.slot_id,
+    x: previewSlot.value.x,
+    y: getSafeCityY(previewSlot.value.y),
+    z: previewSlot.value.z,
+    rotationY
   })
 })
 
 const handleKeydown = (event) => {
+  if (event.code === 'Space' && isPlacementMode.value) {
+    event.preventDefault()
+    rotatePlacement()
+    return
+  }
   if (event.key === 'Escape' && isPlacementMode.value) {
     exitPlacementMode()
   }
@@ -429,7 +464,7 @@ onUnmounted(() => {
       <div class="placement-copy">
         <span class="placement-badge">{{ placementType === 'building' ? '建筑槽位' : '绿化槽位' }}</span>
         <strong>正在放置 {{ placementItem?.nameCn || placementItem?.name || placementItem?.name_cn || placementItem?.name }}</strong>
-        <span>{{ isPlacementSubmitting ? '正在完成部署...' : '点击发光槽位即可完成放置' }}</span>
+        <span>{{ isPlacementSubmitting ? '正在完成部署...' : placementType === 'building' ? `点击发光槽位放置 · 空格旋转方向（${placementRotationY}°）` : '点击发光槽位即可完成放置' }}</span>
       </div>
       <button class="banner-btn focus-hud-btn focus-hud-btn--small focus-hud-btn--danger" type="button" :disabled="isPlacementSubmitting" @click="exitPlacementMode">
         取消
@@ -460,8 +495,8 @@ onUnmounted(() => {
         <TresAmbientLight :color="CITY_THEME.ambient" :intensity="CITY_THEME.ambientIntensity" />
         <TresHemisphereLight color="#ffffff" ground-color="#1b2d58" :intensity="1.05" />
         <TresDirectionalLight :position="[10, 18, 8]" :color="CITY_THEME.directional" :intensity="CITY_THEME.directionalIntensity" />
-        <TresDirectionalLight :position="[-6, 10, 10]" color="#ffffff" :intensity="0.72" />
-        <TresDirectionalLight :position="[-10, 12, -6]" color="#6d5cff" :intensity="0.6" />
+        <TresDirectionalLight :position="[-6, 10, 10]" color="#ffffff" :intensity="0.42" />
+        <TresDirectionalLight :position="[-10, 12, -6]" color="#6d5cff" :intensity="0.16" />
 
         <TresMesh :position="[0, -1.55, 0]" :rotation="[-Math.PI / 2, 0, 0]">
           <TresPlaneGeometry :args="[120, 120]" />
@@ -478,7 +513,7 @@ onUnmounted(() => {
         <TresGroup
           v-if="isPlacementMode && placementItem && previewSlot"
           :position="[previewSlot.x, getSafeCityY(previewSlot.y), previewSlot.z]"
-          :rotation="[0, ((previewSlot.rotation_y || 0) * Math.PI) / 180, 0]"
+          :rotation="[0, (placementRotationY * Math.PI) / 180, 0]"
         >
           <CityModelInstance
             :item="placementItem"

@@ -36,7 +36,7 @@ const buttonClass = computed(() => [
   <button
     :class="buttonClass"
     :disabled="disabled"
-    @click="!disabled && $emit('click')"
+    @click="!disabled && $emit('click', $event)"
   >
     <slot></slot>
   </button>

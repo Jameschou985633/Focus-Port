@@ -135,7 +135,23 @@ const formatTime = (ts) => {
 const categoryLabel = (cat) => {
   if (cat === 'system') return '系统通知'
   if (cat === 'friend') return '好友消息'
+  if (cat === 'collab') return '协作舱邀请'
   return cat
+}
+
+const parseCollabInvite = (msg) => {
+  if (!msg || msg.category !== 'collab') return null
+  try {
+    return JSON.parse(msg.content || '{}')
+  } catch {
+    return null
+  }
+}
+
+const openCollabRoom = () => {
+  const invite = parseCollabInvite(selectedMsg.value)
+  if (!invite?.room_id) return
+  router.push(`/collab/${invite.room_id}`)
 }
 
 const goBack = () => router.push('/')
@@ -229,11 +245,26 @@ onUnmounted(() => {
               <span>来自: {{ selectedMsg.category === 'system' ? '系统' : selectedMsg.sender }}</span>
               <span>{{ selectedMsg.created_at }}</span>
             </div>
-            <div class="detail-content">{{ selectedMsg.content }}</div>
+            <div v-if="selectedMsg.category === 'collab' && parseCollabInvite(selectedMsg)" class="collab-invite-card">
+              <strong>{{ parseCollabInvite(selectedMsg).message }}</strong>
+              <span>房间：{{ parseCollabInvite(selectedMsg).room_name }} · ID {{ parseCollabInvite(selectedMsg).room_id }}</span>
+            </div>
+            <div class="detail-content">
+              <template v-if="selectedMsg.category === 'collab' && parseCollabInvite(selectedMsg)">
+                <p>{{ parseCollabInvite(selectedMsg).message }}</p>
+                <p>房间：{{ parseCollabInvite(selectedMsg).room_name }} · ID {{ parseCollabInvite(selectedMsg).room_id }}</p>
+              </template>
+              <template v-else>
+                {{ selectedMsg.content }}
+              </template>
+            </div>
             <footer class="detail-footer">
               <SpaceButton v-if="selectedMsg.category === 'friend'" variant="primary" size="sm"
                 @click="showCompose = true; composeForm.receiver = selectedMsg.sender; composeForm.title = '回复: ' + selectedMsg.title; closeMessage()">
                 回复
+              </SpaceButton>
+              <SpaceButton v-if="selectedMsg.category === 'collab' && parseCollabInvite(selectedMsg)?.room_id" variant="primary" size="sm" @click="openCollabRoom">
+                进入协作舱
               </SpaceButton>
               <SpaceButton variant="secondary" size="sm" @click="deleteMessage(selectedMsg)">删除</SpaceButton>
             </footer>
@@ -427,6 +458,7 @@ h1 { margin: 0; font-size: 22px; flex: 1; text-shadow: 0 0 18px rgba(0, 255, 255
 
 .msg-indicator.system { background: linear-gradient(180deg, #fbbf24, #f59e0b); }
 .msg-indicator.friend { background: linear-gradient(180deg, #60a5fa, #3b82f6); }
+.msg-indicator.collab { background: linear-gradient(180deg, #34d399, #10b981); }
 
 .msg-body { flex: 1; min-width: 0; }
 
@@ -556,6 +588,19 @@ h1 { margin: 0; font-size: 22px; flex: 1; text-shadow: 0 0 18px rgba(0, 255, 255
 
 .detail-cat.system { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
 .detail-cat.friend { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
+.detail-cat.collab { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+
+.collab-invite-card {
+  margin: 0 24px 4px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  display: grid;
+  gap: 6px;
+  color: #d7fff1;
+  font-size: 13px;
+}
 
 .close-btn {
   width: 32px; height: 32px;
